@@ -1,0 +1,5 @@
+[0/1] Re-running CMake...
+-- Configuring incomplete, errors occurred!
+See also "/home/book/esp32/esp32-board/DesktopScreen/main/build/CMakeFiles/CMakeOutput.log".
+FAILED: build.ninja 
+/usr/local/bin/cmake --regenerate-during-build -S/home/book/esp32/esp32-board/DesktopScreen/main -B/home/book/esp32/esp32-board/DesktopScreen/main/build
