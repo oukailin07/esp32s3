@@ -11,317 +11,228 @@
 #include "ds_inmp441.h"
 #include "ds_max98357.h"
 #define TAG "HTTP"
-
-static esp_err_t _http_access_token_event_handle(esp_http_client_event_t *evt)
-{
-    static char* output_buffer; // Buffer to store response of http request from event handler
-    static int output_len; // Stores number of bytes read
-    switch(evt->event_id) {
-        case HTTP_EVENT_ON_DATA://接收数据事件
-            ESP_LOGI(TAG, "HTTP_EVENT_ON_DATA, len=%d", evt->data_len);
-            if (!esp_http_client_is_chunked_response(evt->client)) {
-                if (output_buffer == NULL) {
-                    output_buffer = (char *) malloc(esp_http_client_get_content_length(evt->client));
-                    output_len = 0;
-                    if (output_buffer == NULL) {
-                        ESP_LOGE(TAG, "Failed to allocate memory for output buffer");
-                        return ESP_FAIL;
-                    }
-                }
-                memcpy(output_buffer + output_len, evt->data, evt->data_len);
-                printf("%.*s\n", output_len, output_buffer);
-                output_len += evt->data_len;
-            }
-            break;
-        case HTTP_EVENT_REDIRECT:
-            ESP_LOGI(TAG, "HTTP_EVENT_REDIRECT");
-            break;
-        case HTTP_EVENT_ERROR:
-            ESP_LOGI(TAG, "HTTP_EVENT_ERROR");
-            break;
-        case HTTP_EVENT_ON_CONNECTED:
-            ESP_LOGI(TAG, "HTTP_EVENT_ON_CONNECTED");
-            break;
-        case HTTP_EVENT_HEADERS_SENT:
-            ESP_LOGI(TAG, "HTTP_EVENT_HEADER_SENT");
-            break;
-        case HTTP_EVENT_ON_HEADER:
-            ESP_LOGI(TAG, "HTTP_EVENT_ON_HEADER, key=%s, value=%s", evt->header_key, evt->header_value);
-            break;
-        case HTTP_EVENT_ON_FINISH:
-            ESP_LOGI(TAG, "HTTP_EVENT_ON_FINISH");
-            if (output_buffer != NULL) {
-                // Response is accumulated in output_buffer. Uncomment the below line to print the accumulated response
-                // ESP_LOG_BUFFER_HEX(TAG, output_buffer, output_len);
-                free(output_buffer);
-                output_buffer = NULL;
-            }
-            output_len = 0;
-            break;
-        case HTTP_EVENT_DISCONNECTED:
-            ESP_LOGI(TAG, "HTTP_EVENT_DISCONNECTED");
-            int mbedtls_err = 0;
-            esp_err_t err = esp_tls_get_and_clear_last_error(evt->data, &mbedtls_err, NULL);
-            if (err != 0) {
-                ESP_LOGI(TAG, "Last esp error code: 0x%x", err);
-                ESP_LOGI(TAG, "Last mbedtls failure: 0x%x", mbedtls_err);
-            }
-            if (output_buffer != NULL) {
-                free(output_buffer);
-                output_buffer = NULL;
-            }
-            output_len = 0;
-            break;
-    }
-    return ESP_OK;
-}
-
-
-static esp_err_t _http_speech_to_text_event_handle(esp_http_client_event_t *evt)
-{
-    static char* output_buffer; // Buffer to store response of http request from event handler
-    static int output_len; // Stores number of bytes read
-    switch(evt->event_id) {
-        case HTTP_EVENT_ON_DATA://接收数据事件
-            ESP_LOGI(TAG, "HTTP_EVENT_ON_DATA, len=%d", evt->data_len);
-            if (!esp_http_client_is_chunked_response(evt->client)) {
-                if (output_buffer == NULL) {
-                    output_buffer = (char *) malloc(esp_http_client_get_content_length(evt->client));
-                    output_len = 0;
-                    if (output_buffer == NULL) {
-                        ESP_LOGE(TAG, "Failed to allocate memory for output buffer");
-                        return ESP_FAIL;
-                    }
-                }
-                memcpy(output_buffer + output_len, evt->data, evt->data_len);
-                printf("%.*s\n", output_len, output_buffer);
-                output_len += evt->data_len;
-            }
-            break;
-        case HTTP_EVENT_REDIRECT:
-            ESP_LOGI(TAG, "HTTP_EVENT_REDIRECT");
-            break;
-        case HTTP_EVENT_ERROR:
-            ESP_LOGI(TAG, "HTTP_EVENT_ERROR");
-            break;
-        case HTTP_EVENT_ON_CONNECTED:
-            ESP_LOGI(TAG, "HTTP_EVENT_ON_CONNECTED");
-            break;
-        case HTTP_EVENT_HEADERS_SENT:
-            ESP_LOGI(TAG, "HTTP_EVENT_HEADER_SENT");
-            break;
-        case HTTP_EVENT_ON_HEADER:
-            ESP_LOGI(TAG, "HTTP_EVENT_ON_HEADER, key=%s, value=%s", evt->header_key, evt->header_value);
-            break;
-        case HTTP_EVENT_ON_FINISH:
-            ESP_LOGI(TAG, "HTTP_EVENT_ON_FINISH");
-            if (output_buffer != NULL) {
-                // Response is accumulated in output_buffer. Uncomment the below line to print the accumulated response
-                // ESP_LOG_BUFFER_HEX(TAG, output_buffer, output_len);
-                free(output_buffer);
-                output_buffer = NULL;
-            }
-            output_len = 0;
-            break;
-        case HTTP_EVENT_DISCONNECTED:
-            ESP_LOGI(TAG, "HTTP_EVENT_DISCONNECTED");
-            int mbedtls_err = 0;
-            esp_err_t err = esp_tls_get_and_clear_last_error(evt->data, &mbedtls_err, NULL);
-            if (err != 0) {
-                ESP_LOGI(TAG, "Last esp error code: 0x%x", err);
-                ESP_LOGI(TAG, "Last mbedtls failure: 0x%x", mbedtls_err);
-            }
-            if (output_buffer != NULL) {
-                free(output_buffer);
-                output_buffer = NULL;
-            }
-            output_len = 0;
-            break;
-    }
-    return ESP_OK;
-}
-
-
-static esp_err_t _http_ai_dialogue(esp_http_client_event_t *evt)
-{
-    static char* output_buffer; // Buffer to store response of http request from event handler
-    static int output_len; // Stores number of bytes read
-    switch(evt->event_id) {
-        case HTTP_EVENT_ON_DATA://接收数据事件
-            ESP_LOGI(TAG, "HTTP_EVENT_ON_DATA, len=%d", evt->data_len);
-            if (!esp_http_client_is_chunked_response(evt->client)) {
-                if (output_buffer == NULL) {
-                    output_buffer = (char *) malloc(esp_http_client_get_content_length(evt->client));
-                    output_len = 0;
-                    if (output_buffer == NULL) {
-                        ESP_LOGE(TAG, "Failed to allocate memory for output buffer");
-                        return ESP_FAIL;
-                    }
-                }
-                memcpy(output_buffer + output_len, evt->data, evt->data_len);
-                printf("%.*s\n", output_len, output_buffer);
-                output_len += evt->data_len;
-            }
-            break;
-        case HTTP_EVENT_REDIRECT:
-            ESP_LOGI(TAG, "HTTP_EVENT_REDIRECT");
-            break;
-        case HTTP_EVENT_ERROR:
-            ESP_LOGI(TAG, "HTTP_EVENT_ERROR");
-            break;
-        case HTTP_EVENT_ON_CONNECTED:
-            ESP_LOGI(TAG, "HTTP_EVENT_ON_CONNECTED");
-            break;
-        case HTTP_EVENT_HEADERS_SENT:
-            ESP_LOGI(TAG, "HTTP_EVENT_HEADER_SENT");
-            break;
-        case HTTP_EVENT_ON_HEADER:
-            ESP_LOGI(TAG, "HTTP_EVENT_ON_HEADER, key=%s, value=%s", evt->header_key, evt->header_value);
-            break;
-        case HTTP_EVENT_ON_FINISH:
-            ESP_LOGI(TAG, "HTTP_EVENT_ON_FINISH");
-            if (output_buffer != NULL) {
-                // Response is accumulated in output_buffer. Uncomment the below line to print the accumulated response
-                // ESP_LOG_BUFFER_HEX(TAG, output_buffer, output_len);
-                free(output_buffer);
-                output_buffer = NULL;
-            }
-            output_len = 0;
-            break;
-        case HTTP_EVENT_DISCONNECTED:
-            ESP_LOGI(TAG, "HTTP_EVENT_DISCONNECTED");
-            int mbedtls_err = 0;
-            esp_err_t err = esp_tls_get_and_clear_last_error(evt->data, &mbedtls_err, NULL);
-            if (err != 0) {
-                ESP_LOGI(TAG, "Last esp error code: 0x%x", err);
-                ESP_LOGI(TAG, "Last mbedtls failure: 0x%x", mbedtls_err);
-            }
-            if (output_buffer != NULL) {
-                free(output_buffer);
-                output_buffer = NULL;
-            }
-            output_len = 0;
-            break;
-    }
-    return ESP_OK;
-}
-
+#include "mbedtls/base64.h"  // 需要启用 mbedtls
+#include "esp_log.h"
+#include "esp_http_client.h"
+#include "cJSON.h"
+#include <stdlib.h>
+#include <string.h>
 
 // 获取百度智能云的Access Token
-char* get_baidu_access_token(void)
-{
-    char url[256];
-    snprintf(url, sizeof(url), "https://aip.baidubce.com/oauth/2.0/token?grant_type=client_credentials&client_id=%s&client_secret=%s",
+char* get_baidu_access_token(void) {
+    char url[512];
+    snprintf(url, sizeof(url),
+             "https://aip.baidubce.com/oauth/2.0/token?grant_type=client_credentials&client_id=%s&client_secret=%s",
              BAIDU_API_KEY, BAIDU_SECRET_KEY);
 
     esp_http_client_config_t config = {
         .url = url,
         .method = HTTP_METHOD_POST,
-        .event_handler = _http_access_token_event_handle,//注册时间回调
-        .skip_cert_common_name_check = true,
-        //.crt_bundle_attach = esp_crt_bundle_attach,  // 启用根证书验证
+        .crt_bundle_attach = esp_crt_bundle_attach,
+        .timeout_ms = 5000,
     };
+
     esp_http_client_handle_t client = esp_http_client_init(&config);
-
-    esp_err_t err = esp_http_client_perform(client);
-    if (err == ESP_OK) {
-        int status_code = esp_http_client_get_status_code(client);
-        if (status_code == 200) {
-            char* response_body = malloc(esp_http_client_get_content_length(client));
-            esp_http_client_read(client, response_body, esp_http_client_get_content_length(client));
-
-            cJSON* response = cJSON_Parse(response_body);
-            char* access_token = strdup(cJSON_GetObjectItem(response, "access_token")->valuestring);
-            cJSON_Delete(response);
-            free(response_body);
-            return access_token;
-        }
-    }
-    esp_http_client_cleanup(client);
-    return NULL;
-}
-
-// 语音识别（百度智能云）
-char* http_speech_to_text(const uint8_t* audio_data, size_t audio_length)
-{
-    //char* access_token = get_baidu_access_token();
-    //if (access_token == NULL) {
-    //    ESP_LOGE(TAG, "Failed to get Baidu access token");
-    //    return NULL;
-    //}
-    char url[256];
-    snprintf(url, sizeof(url), "https://aip.baidubce.com/oauth/2.0/token?grant_type=client_credentials&client_id=%s&client_secret=%s",
-             BAIDU_API_KEY, BAIDU_SECRET_KEY);
-
-    esp_http_client_config_t config = {
-        .url = url,
-        .method = HTTP_METHOD_POST,
-        //.crt_bundle_attach = esp_crt_bundle_attach,  // 启用根证书验证
-        .event_handler = _http_speech_to_text_event_handle,//注册时间回调
-        .skip_cert_common_name_check = true,
-    };
-    esp_http_client_handle_t client = esp_http_client_init(&config);
-    if (client == NULL) {
-        ESP_LOGE(TAG, "Failed to initialize HTTP client");
+    if (!client) {
+        ESP_LOGE(TAG, "Failed to init HTTP client");
         return NULL;
     }
 
-    esp_http_client_set_post_field(client, (const char *)audio_data, audio_length);
-    esp_http_client_set_header(client, "Content-Type", "audio/pcm;rate=16000");
-
     esp_err_t err = esp_http_client_perform(client);
-    if (err == ESP_OK) {
-        int status_code = esp_http_client_get_status_code(client);
-        if (status_code == 200) {
-            int content_length = esp_http_client_get_content_length(client);
-            if (content_length <= 0) {
-                ESP_LOGE(TAG, "Invalid content length: %d", content_length);
-                esp_http_client_cleanup(client);
-                return NULL;
-            }
-
-            char* response_body = malloc(content_length + 1); // 分配内存
-            if (response_body == NULL) {
-                ESP_LOGE(TAG, "Failed to allocate memory for response body");
-                esp_http_client_cleanup(client);
-                return NULL;
-            }
-
-            esp_http_client_read(client, response_body, content_length);
-            response_body[content_length] = '\0'; // 添加字符串结束符
-
-            cJSON* response = cJSON_Parse(response_body);
-            if (response == NULL) {
-                ESP_LOGE(TAG, "Failed to parse JSON response");
-                free(response_body);
-                esp_http_client_cleanup(client);
-                return NULL;
-            }
-
-            cJSON* recognized_text_json = cJSON_GetObjectItem(response, "result");
-            if (recognized_text_json == NULL) {
-                ESP_LOGE(TAG, "Failed to get recognized text from JSON response");
-                cJSON_Delete(response);
-                free(response_body);
-                esp_http_client_cleanup(client);
-                return NULL;
-            }
-
-            char* recognized_text = strdup(recognized_text_json->valuestring); // 复制识别结果
-            cJSON_Delete(response);
-            free(response_body);
-            esp_http_client_cleanup(client);
-            return recognized_text;
-        } else {
-            ESP_LOGE(TAG, "HTTP request failed, status code: %d", status_code);
-        }
-    } else {
-        ESP_LOGE(TAG, "HTTP request failed, error: %s", esp_err_to_name(err));
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "HTTP request failed: %s", esp_err_to_name(err));
+        esp_http_client_cleanup(client);
+        return NULL;
     }
 
+    int content_length = esp_http_client_get_content_length(client);
+    if (content_length <= 0) {
+        ESP_LOGE(TAG, "Invalid content length: %d", content_length);
+        esp_http_client_cleanup(client);
+        return NULL;
+    }
+
+    char* response_body = malloc(content_length + 1);
+    if (!response_body) {
+        ESP_LOGE(TAG, "Memory allocation failed");
+        esp_http_client_cleanup(client);
+        return NULL;
+    }
+    esp_http_client_read_response(client, response_body, content_length);
+    response_body[content_length] = '\0';
+    ESP_LOGI(TAG, "HTTP Response: %s", response_body);
+
+    cJSON* response = cJSON_Parse(response_body);
+    free(response_body);
     esp_http_client_cleanup(client);
-    return NULL;
+    
+    if (!response) {
+        ESP_LOGE(TAG, "Failed to parse JSON");
+        return NULL;
+    }
+
+    cJSON* access_token_item = cJSON_GetObjectItem(response, "access_token");
+    if (!cJSON_IsString(access_token_item)) {
+        ESP_LOGE(TAG, "JSON does not contain valid access_token");
+        cJSON_Delete(response);
+        return NULL;
+    }
+
+    char* access_token = strdup(access_token_item->valuestring);
+    cJSON_Delete(response);
+    ESP_LOGI(TAG, "Access Token: %s", access_token);
+    return access_token;
 }
+
+
+
+#define TAG "HTTP"
+
+char* base64_encode(const uint8_t* input, size_t input_len, size_t* output_len) {
+    if (!input || input_len == 0) {
+        ESP_LOGE(TAG, "Invalid input data for Base64 encoding");
+        return NULL;
+    }
+
+    size_t encoded_len = ((input_len + 2) / 3) * 4 + 1;  // 计算 Base64 编码长度
+    char* encoded_data = (char*)malloc(encoded_len);
+    if (!encoded_data) {
+        ESP_LOGE(TAG, "Memory allocation failed for Base64 buffer");
+        return NULL;
+    }
+
+    int ret = mbedtls_base64_encode((unsigned char*)encoded_data, encoded_len, output_len, input, input_len);
+    if (ret == MBEDTLS_ERR_BASE64_BUFFER_TOO_SMALL) {
+        ESP_LOGE(TAG, "Base64 buffer too small! Required: %d, Allocated: %d", (int)(*output_len), (int)encoded_len);
+        free(encoded_data);
+        return NULL;
+    } else if (ret != 0) {
+        ESP_LOGE(TAG, "Base64 encoding failed, error code: %d", ret);
+        free(encoded_data);
+        return NULL;
+    }
+
+    // **替换 `+` 和 `/` 为 URL-safe Base64**
+    for (size_t i = 0; i < *output_len; i++) {
+        if (encoded_data[i] == '+') encoded_data[i] = '-';
+        else if (encoded_data[i] == '/') encoded_data[i] = '_';
+    }
+
+    encoded_data[*output_len] = '\0';
+    return encoded_data;
+}
+
+
+
+char* http_speech_to_text(const uint8_t* audio_data, size_t audio_length) {
+    char url[512];
+    snprintf(url, sizeof(url),
+             "https://aip.baidubce.com/rest/2.0/speech/v2/asr?access_token=24.0c10b25b8cb7f7167f1fe3aab0bd3bd1.2592000.1744720185.282335-118065803");
+
+    // **进行 Base64 编码**
+    size_t base64_length;
+    char* base64_audio = base64_encode(audio_data, audio_length, &base64_length);
+    if (!base64_audio) {
+        ESP_LOGE(TAG, "Failed to encode audio to Base64");
+        return NULL;
+    }
+
+    // **构建 JSON 请求体**
+    char* json_body = (char*)malloc(512 + base64_length);  // 预留足够空间
+    if (!json_body) {
+        ESP_LOGE(TAG, "Memory allocation failed for JSON body");
+        free(base64_audio);
+        return NULL;
+    }
+
+    snprintf(json_body, 512 + base64_length,
+             "{\"format\":\"pcm\",\"rate\":16000,\"channel\":1,\"cuid\":\"esp32s3\","
+             "\"token\":\"24.0c10b25b8cb7f7167f1fe3aab0bd3bd1.2592000.1744720185.282335-118065803\","
+             "\"len\":%d,\"speech\":\"%s\"}",
+             (int)audio_length, base64_audio);
+
+    free(base64_audio);  // 释放 Base64 缓存
+
+    //ESP_LOGI(TAG, "请求体: %s", json_body);
+
+    // **初始化 HTTP 客户端**
+    esp_http_client_config_t config = {
+        .url = url,
+        .method = HTTP_METHOD_POST,
+        .timeout_ms = 10000,
+    };
+
+    esp_http_client_handle_t client = esp_http_client_init(&config);
+    if (!client) {
+        ESP_LOGE(TAG, "Failed to initialize HTTP client");
+        free(json_body);
+        return NULL;
+    }
+
+    esp_http_client_set_header(client, "Content-Type", "application/json");
+    esp_http_client_set_header(client, "Accept", "application/json");
+    esp_http_client_set_post_field(client, json_body, strlen(json_body));
+
+    // **发送 HTTP 请求**
+    esp_err_t err = esp_http_client_perform(client);
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "HTTP request failed: %s", esp_err_to_name(err));
+        free(json_body);
+        esp_http_client_cleanup(client);
+        return NULL;
+    }
+
+    // **读取响应**
+    int content_length = esp_http_client_get_content_length(client);
+    if (content_length <= 0) {
+        ESP_LOGE(TAG, "Invalid content length");
+        free(json_body);
+        esp_http_client_cleanup(client);
+        return NULL;
+    }
+
+    char* response_body = malloc(content_length + 1);
+    if (!response_body) {
+        ESP_LOGE(TAG, "Memory allocation failed");
+        free(json_body);
+        esp_http_client_cleanup(client);
+        return NULL;
+    }
+
+    int read_len = esp_http_client_read(client, response_body, content_length);
+    //if (read_len > 0) {
+
+   // }
+    response_body[content_length] = '\0';
+    printf("HTTP Response: %s\n", response_body);
+    //response_body[content_length] = '\0';  // 添加 Null 终止符
+    
+    free(json_body);
+    esp_http_client_cleanup(client);
+
+    // **解析 JSON 响应**
+    cJSON* response = cJSON_Parse(response_body);
+    free(response_body);
+    if (!response) {
+        ESP_LOGE(TAG, "Failed to parse JSON");
+        return NULL;
+    }
+
+    cJSON* result_item = cJSON_GetObjectItem(response, "result");
+    if (!cJSON_IsArray(result_item) || cJSON_GetArraySize(result_item) == 0) {
+        ESP_LOGE(TAG, "Invalid JSON response format");
+        cJSON_Delete(response);
+        return NULL;
+    }
+
+    cJSON* first_result = cJSON_GetArrayItem(result_item, 0);
+    char* recognized_text = strdup(first_result->valuestring);
+    cJSON_Delete(response);
+
+    return recognized_text;
+}
+
+
 
 // AI对话（MiniMax）
 char* http_ai_dialogue(const char* text)
@@ -336,7 +247,7 @@ char* http_ai_dialogue(const char* text)
     esp_http_client_config_t config = {
         .url = MINIMAX_API_URL,
         .method = HTTP_METHOD_POST,
-        .event_handler = _http_ai_dialogue,//注册时间回调
+        //.event_handler = _http_ai_dialogue,//注册时间回调
         .skip_cert_common_name_check = true,
     };
     esp_http_client_handle_t client = esp_http_client_init(&config);

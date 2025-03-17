@@ -10,7 +10,7 @@ void i2s_speaker_init() {
 
     i2s_std_config_t std_cfg = {
         .clk_cfg = {
-            .sample_rate_hz = 44100, // 采样率 44.1kHz
+            .sample_rate_hz = 16000, // 采样率 44.1kHz
             .clk_src = I2S_CLK_SRC_DEFAULT, // 默认时钟源
             .mclk_multiple = I2S_MCLK_MULTIPLE_384, // MCLK 倍频系数
         },
