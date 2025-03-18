@@ -8,309 +8,255 @@
 #include "nvs_flash.h"
 #include "esp_event.h"
 #include "esp_crt_bundle.h"  // 包含根证书包
-#include "ds_inmp441.h"
-#include "ds_max98357.h"
-#define TAG "HTTP"
-#include "mbedtls/base64.h"  // 需要启用 mbedtls
-#include "esp_log.h"
-#include "esp_http_client.h"
-#include "cJSON.h"
 #include <stdlib.h>
 #include <string.h>
+#include "app_url_encode.h"
+#include "ds_inmp441.h"
+#include "ds_max98357.h"
+#include <json_parser.h>
+#define TAG "HTTP"
+QueueHandle_t http_speech_to_text_event_queue;
+QueueHandle_t http_ai_dialogue_event_queue;
+QueueHandle_t http_tts_event_queue;
+char *access_token = "24.0c10b25b8cb7f7167f1fe3aab0bd3bd1.2592000.1744720185.282335-118065803";
+char *url_formate = "http://vop.baidu.com/server_api?dev_pid=1537&cuid=dPKArKm9yCGIOwPoCSjTDzmIIj4cBsEV&token=%s";
+size_t text_url_encode_size = 0;
+
+esp_http_client_handle_t stt_client;
+esp_http_client_handle_t token_client;
+esp_http_client_handle_t tongyiqianwen_client;
+char *tts_url = "https://tsn.baidu.com/text2audio";
+char *formate = "tex=%s&tok=%s&cuid=mpBNOBqqTHmz93GbNEZDm5vUnwV0Lnm1&ctp=1&lan=zh&spd=5&pit=5&vol=5&per=4&aue=4"; // PCM 16K
+char *client_id = "HKXvSjLc5Co28bjtvVIXkVuE";
+char *client_secret = "pzVcTIXM8K2mTHWuPWZVMZceoQqjptMf";
+char token[256] = {0};
+
+
+char *tongyi_url = "https://dashscope.aliyuncs.com/api/v1/services/aigc/text-generation/generation";
+char *tongyiqianwen_key = "sk-1221ac76f44b4936ada7d92836404038";
+char *tongyiqianwen_format = "{\"model\": \"qwen-turbo\",\"input\": {\"messages\": [{\"role\": \"system\",\"content\": \"You are a helpful assistant.\"},{\"role\": \"user\",\"content\": \"%s\"}]},\"parameters\": {\"result_format\": \"message\"}}";
+
+extern i2s_chan_handle_t tx_handle; 
+
+esp_err_t app_http_tongyi_event_handler(esp_http_client_event_t *evt)
+{
+    if (evt->event_id == HTTP_EVENT_ON_DATA) {
+        ESP_LOGI(TAG, "%.*s", evt->data_len, (char *)evt->data);
+        i2s_channel_write(tx_handle, (char *)evt->data, evt->data_len, NULL, 100);
+    }
+
+    return ESP_OK;
+}
+
+
+
+void app_ask_tongyi_task(void *pvParameters)
+{
+    esp_http_client_event_t evt;
+    while (1) {
+        xQueueReceive(http_speech_to_text_event_queue, &evt, portMAX_DELAY);
+        char *data = heap_caps_calloc(1, strlen(formate) + strlen(evt.data) + 1, MALLOC_CAP_DMA);
+        sprintf(data, formate, evt.data);
+        ESP_LOGI(TAG, "%s %d", evt.data, strlen(evt.data));
+
+        esp_http_client_config_t config = {
+            .method = HTTP_METHOD_POST,
+            .event_handler = app_http_tongyi_event_handler,
+            .buffer_size = 4 * 1024,
+        };
+        config.url = tongyi_url;
+        tongyiqianwen_client = esp_http_client_init(&config);
+        esp_http_client_set_method(tongyiqianwen_client, HTTP_METHOD_POST);
+        esp_http_client_set_header(tongyiqianwen_client, "Content-Type", "application/json");
+        esp_http_client_set_header(tongyiqianwen_client, "Authorization", tongyiqianwen_key);
+        esp_http_client_set_post_field(tongyiqianwen_client, data, strlen(data));
+        esp_err_t err = esp_http_client_perform(tongyiqianwen_client);
+        if (err == ESP_OK) {
+            ESP_LOGI(TAG, "HTTP GET Status = %d, content_length = %d", esp_http_client_get_status_code(tongyiqianwen_client), (int)esp_http_client_get_content_length(tongyiqianwen_client));
+        } else {
+            ESP_LOGI(TAG, "HTTP GET request failed: %s", esp_err_to_name(err));
+        }
+        esp_http_client_cleanup(tongyiqianwen_client);
+        free(data);
+    }
+}
+
+esp_err_t app_http_baidu_access_token_event_handler(esp_http_client_event_t *evt)
+{
+    if (evt->event_id == HTTP_EVENT_ON_DATA) {
+        // ESP_LOGI(TAG, "%.*s", evt->data_len, (char *)evt->data);
+        jparse_ctx_t jctx;
+        int ret = json_parse_start(&jctx, (char *)evt->data, evt->data_len);
+        if (ret != OS_SUCCESS) {
+            ESP_LOGI(TAG, "Parser failed\n");
+            return ESP_FAIL;
+        }
+
+        if (json_obj_get_string(&jctx, "access_token", token, sizeof(token)) == OS_SUCCESS) {
+            ESP_LOGI(TAG, "access_token: %s\n", token);
+        }
+
+        json_parse_end(&jctx);
+    }
+
+    return ESP_OK;
+}
 
 // 获取百度智能云的Access Token
-char* get_baidu_access_token(void) {
+void get_baidu_access_token(void) {
     char url[512];
     snprintf(url, sizeof(url),
-             "https://aip.baidubce.com/oauth/2.0/token?grant_type=client_credentials&client_id=%s&client_secret=%s",
-             BAIDU_API_KEY, BAIDU_SECRET_KEY);
+             "https://aip.baidubce.com/oauth/2.0/token?client_id=%s&client_secret=%s&grant_type=client_credentials",
+             client_id, client_secret);
 
     esp_http_client_config_t config = {
         .url = url,
         .method = HTTP_METHOD_POST,
-        .crt_bundle_attach = esp_crt_bundle_attach,
-        .timeout_ms = 5000,
+        .event_handler = app_http_baidu_access_token_event_handler,
+        .buffer_size = 4 * 1024,
     };
 
-    esp_http_client_handle_t client = esp_http_client_init(&config);
-    if (!client) {
+    stt_client = esp_http_client_init(&config);
+    if (!stt_client) {
         ESP_LOGE(TAG, "Failed to init HTTP client");
-        return NULL;
+        return ;
     }
-
-    esp_err_t err = esp_http_client_perform(client);
+    esp_http_client_set_method(stt_client, HTTP_METHOD_POST);
+    esp_http_client_set_header(stt_client, "Content-Type", "application/json");
+    esp_http_client_set_header(stt_client, "Accept", "application/json");
+    esp_err_t err = esp_http_client_perform(stt_client);
     if (err != ESP_OK) {
         ESP_LOGE(TAG, "HTTP request failed: %s", esp_err_to_name(err));
-        esp_http_client_cleanup(client);
-        return NULL;
+        esp_http_client_cleanup(stt_client);
+        return ;
     }
-
-    int content_length = esp_http_client_get_content_length(client);
-    if (content_length <= 0) {
-        ESP_LOGE(TAG, "Invalid content length: %d", content_length);
-        esp_http_client_cleanup(client);
-        return NULL;
+    if (err == ESP_OK) {
+        ESP_LOGI(TAG, "HTTP GET Status = %d, content_length = %d", esp_http_client_get_status_code(stt_client), (int)esp_http_client_get_content_length(stt_client));
+    } else {
+        ESP_LOGI(TAG, "HTTP GET request failed: %s", esp_err_to_name(err));
     }
-
-    char* response_body = malloc(content_length + 1);
-    if (!response_body) {
-        ESP_LOGE(TAG, "Memory allocation failed");
-        esp_http_client_cleanup(client);
-        return NULL;
-    }
-    esp_http_client_read_response(client, response_body, content_length);
-    response_body[content_length] = '\0';
-    ESP_LOGI(TAG, "HTTP Response: %s", response_body);
-
-    cJSON* response = cJSON_Parse(response_body);
-    free(response_body);
-    esp_http_client_cleanup(client);
-    
-    if (!response) {
-        ESP_LOGE(TAG, "Failed to parse JSON");
-        return NULL;
-    }
-
-    cJSON* access_token_item = cJSON_GetObjectItem(response, "access_token");
-    if (!cJSON_IsString(access_token_item)) {
-        ESP_LOGE(TAG, "JSON does not contain valid access_token");
-        cJSON_Delete(response);
-        return NULL;
-    }
-
-    char* access_token = strdup(access_token_item->valuestring);
-    cJSON_Delete(response);
-    ESP_LOGI(TAG, "Access Token: %s", access_token);
-    return access_token;
+    esp_http_client_cleanup(stt_client);
+    free(url);
 }
 
 
-
-#define TAG "HTTP"
-
-char* base64_encode(const uint8_t* input, size_t input_len, size_t* output_len) {
-    if (!input || input_len == 0) {
-        ESP_LOGE(TAG, "Invalid input data for Base64 encoding");
-        return NULL;
+//stt语音识别
+esp_err_t app_http_baidu_speech_recognition_event_handler(esp_http_client_event_t *evt)
+{
+    if (evt->event_id == HTTP_EVENT_ON_DATA) {
+        ESP_LOGI(TAG, "%.*s", evt->data_len, (char *)evt->data);
     }
-
-    size_t encoded_len = ((input_len + 2) / 3) * 4 + 1;  // 计算 Base64 编码长度
-    char* encoded_data = (char*)malloc(encoded_len);
-    if (!encoded_data) {
-        ESP_LOGE(TAG, "Memory allocation failed for Base64 buffer");
-        return NULL;
-    }
-
-    int ret = mbedtls_base64_encode((unsigned char*)encoded_data, encoded_len, output_len, input, input_len);
-    if (ret == MBEDTLS_ERR_BASE64_BUFFER_TOO_SMALL) {
-        ESP_LOGE(TAG, "Base64 buffer too small! Required: %d, Allocated: %d", (int)(*output_len), (int)encoded_len);
-        free(encoded_data);
-        return NULL;
-    } else if (ret != 0) {
-        ESP_LOGE(TAG, "Base64 encoding failed, error code: %d", ret);
-        free(encoded_data);
-        return NULL;
-    }
-
-    // **替换 `+` 和 `/` 为 URL-safe Base64**
-    for (size_t i = 0; i < *output_len; i++) {
-        if (encoded_data[i] == '+') encoded_data[i] = '-';
-        else if (encoded_data[i] == '/') encoded_data[i] = '_';
-    }
-
-    encoded_data[*output_len] = '\0';
-    return encoded_data;
+    xQueueSend(http_speech_to_text_event_queue, &evt, 0);
+    return ESP_OK;
 }
 
-
-
-char* http_speech_to_text(const uint8_t* audio_data, size_t audio_length) {
-    char url[512];
-    snprintf(url, sizeof(url),
-             "https://aip.baidubce.com/rest/2.0/speech/v2/asr?access_token=24.0c10b25b8cb7f7167f1fe3aab0bd3bd1.2592000.1744720185.282335-118065803");
-
-    // **进行 Base64 编码**
-    size_t base64_length;
-    char* base64_audio = base64_encode(audio_data, audio_length, &base64_length);
-    if (!base64_audio) {
-        ESP_LOGE(TAG, "Failed to encode audio to Base64");
-        return NULL;
-    }
-
-    // **构建 JSON 请求体**
-    char* json_body = (char*)malloc(512 + base64_length);  // 预留足够空间
-    if (!json_body) {
-        ESP_LOGE(TAG, "Memory allocation failed for JSON body");
-        free(base64_audio);
-        return NULL;
-    }
-
-    snprintf(json_body, 512 + base64_length,
-             "{\"format\":\"pcm\",\"rate\":16000,\"channel\":1,\"cuid\":\"esp32s3\","
-             "\"token\":\"24.0c10b25b8cb7f7167f1fe3aab0bd3bd1.2592000.1744720185.282335-118065803\","
-             "\"len\":%d,\"speech\":\"%s\"}",
-             (int)audio_length, base64_audio);
-
-    free(base64_audio);  // 释放 Base64 缓存
-
-    //ESP_LOGI(TAG, "请求体: %s", json_body);
-
+void http_speech_to_text(const char* wav_raw_buffer, size_t wav_file_size) {
     // **初始化 HTTP 客户端**
     esp_http_client_config_t config = {
-        .url = url,
         .method = HTTP_METHOD_POST,
-        .timeout_ms = 10000,
+        .event_handler = app_http_baidu_speech_recognition_event_handler,
+        .buffer_size = 4 * 1024,
     };
-
-    esp_http_client_handle_t client = esp_http_client_init(&config);
-    if (!client) {
+    char *url = heap_caps_malloc(strlen(url_formate) + strlen(access_token) + 1, MALLOC_CAP_DMA);
+    sprintf(url, url_formate, access_token);
+    config.url = url;
+    
+    stt_client = esp_http_client_init(&config);
+    if (!stt_client) {
         ESP_LOGE(TAG, "Failed to initialize HTTP client");
-        free(json_body);
-        return NULL;
+        return ;
     }
-
-    esp_http_client_set_header(client, "Content-Type", "application/json");
-    esp_http_client_set_header(client, "Accept", "application/json");
-    esp_http_client_set_post_field(client, json_body, strlen(json_body));
+    esp_http_client_set_method(stt_client, HTTP_METHOD_POST);
+    esp_http_client_set_header(stt_client, "Content-Type", "audio/pcm;rate=16000");
+    esp_http_client_set_header(stt_client, "Accept", "application/json");
+    esp_http_client_set_post_field(stt_client, wav_raw_buffer, wav_file_size);
 
     // **发送 HTTP 请求**
-    esp_err_t err = esp_http_client_perform(client);
-    if (err != ESP_OK) {
-        ESP_LOGE(TAG, "HTTP request failed: %s", esp_err_to_name(err));
-        free(json_body);
-        esp_http_client_cleanup(client);
-        return NULL;
+    esp_err_t err = esp_http_client_perform(stt_client);
+    if (err == ESP_OK) {
+        ESP_LOGI(TAG, "HTTP GET Status = %d, content_length = %d", esp_http_client_get_status_code(stt_client), (int)esp_http_client_get_content_length(stt_client));
+    } else {
+        ESP_LOGI(TAG, "HTTP GET request failed: %s", esp_err_to_name(err));
     }
 
-    // **读取响应**
-    int content_length = esp_http_client_get_content_length(client);
-    if (content_length <= 0) {
-        ESP_LOGE(TAG, "Invalid content length");
-        free(json_body);
-        esp_http_client_cleanup(client);
-        return NULL;
+    esp_http_client_cleanup(stt_client);
+
+    free(url);
+}
+
+esp_err_t app_http_baidu_tts_event_handler(esp_http_client_event_t *evt)
+{
+    if (evt->event_id == HTTP_EVENT_ON_DATA) {
+        ESP_LOGI(TAG, "Received length:%d", evt->data_len);
+        i2s_channel_write(tx_handle, (char *)evt->data, evt->data_len, NULL, 100);
     }
 
-    char* response_body = malloc(content_length + 1);
-    if (!response_body) {
-        ESP_LOGE(TAG, "Memory allocation failed");
-        free(json_body);
-        esp_http_client_cleanup(client);
-        return NULL;
+    return ESP_OK;
+}
+//tts
+void http_tts_dialogue(void* arg)
+{
+    esp_http_client_event_t evt;
+    xQueueReceive(http_speech_to_text_event_queue, &evt, portMAX_DELAY); 
+
+    // Http
+    esp_http_client_config_t config = {
+        .method = HTTP_METHOD_POST,
+        .event_handler = app_http_baidu_tts_event_handler,
+        .buffer_size = 10 * 1024,
+    };
+
+    config.url = tts_url;
+    stt_client = esp_http_client_init(&config);
+    esp_http_client_set_method(stt_client, HTTP_METHOD_POST);
+    esp_http_client_set_header(stt_client, "Content-Type", "application/x-www-form-urlencoded");
+    esp_http_client_set_header(stt_client, "Accept", "*/*");
+
+    url_encode((unsigned char *)evt.data, strlen(evt.data), &text_url_encode_size, NULL, 0);
+
+    ESP_LOGI(TAG, "text size after url:%zu", text_url_encode_size);
+
+    char *text_url_encode = heap_caps_calloc(1, text_url_encode_size + 1, MALLOC_CAP_DMA);
+
+    if (text_url_encode == NULL) {
+        ESP_LOGI(TAG, "Malloc text url encode failed");
+        return;
     }
 
-    int read_len = esp_http_client_read(client, response_body, content_length);
-    //if (read_len > 0) {
+    url_encode((unsigned char *)evt.data, strlen(evt.data), &text_url_encode_size, (unsigned char *)text_url_encode, text_url_encode_size + 1);
 
-   // }
-    response_body[content_length] = '\0';
-    printf("HTTP Response: %s\n", response_body);
-    //response_body[content_length] = '\0';  // 添加 Null 终止符
-    
-    free(json_body);
-    esp_http_client_cleanup(client);
+    char *payload = heap_caps_calloc(1, strlen(formate) + strlen(access_token) + strlen(text_url_encode) + 1, MALLOC_CAP_DMA);
 
-    // **解析 JSON 响应**
-    cJSON* response = cJSON_Parse(response_body);
-    free(response_body);
-    if (!response) {
-        ESP_LOGE(TAG, "Failed to parse JSON");
-        return NULL;
+    if (payload == NULL) {
+        free(text_url_encode);
+        ESP_LOGI(TAG, "Malloc payload failed");
+        return;
     }
 
-    cJSON* result_item = cJSON_GetObjectItem(response, "result");
-    if (!cJSON_IsArray(result_item) || cJSON_GetArraySize(result_item) == 0) {
-        ESP_LOGE(TAG, "Invalid JSON response format");
-        cJSON_Delete(response);
-        return NULL;
+    sprintf(payload, formate, text_url_encode, access_token);
+    esp_http_client_set_post_field(stt_client, payload, strlen(payload));
+
+    esp_err_t err = esp_http_client_perform(stt_client);
+    if (err == ESP_OK) {
+        ESP_LOGI(TAG, "HTTP GET Status = %d, content_length = %d", esp_http_client_get_status_code(stt_client), (int)esp_http_client_get_content_length(stt_client));
+    } else {
+        ESP_LOGI(TAG, "HTTP GET request failed: %s", esp_err_to_name(err));
     }
+    esp_http_client_cleanup(stt_client);
 
-    cJSON* first_result = cJSON_GetArrayItem(result_item, 0);
-    char* recognized_text = strdup(first_result->valuestring);
-    cJSON_Delete(response);
-
-    return recognized_text;
+    free(text_url_encode);
+    free(payload);
 }
 
 
 
-// AI对话（MiniMax）
-char* http_ai_dialogue(const char* text)
-{
-    cJSON* request = cJSON_CreateObject();
-    cJSON_AddStringToObject(request, "prompt", text); // 输入文本
-    cJSON_AddNumberToObject(request, "max_tokens", 50); // 最大生成token数
 
-    char* request_body = cJSON_Print(request);
-    cJSON_Delete(request);
 
-    esp_http_client_config_t config = {
-        .url = MINIMAX_API_URL,
-        .method = HTTP_METHOD_POST,
-        //.event_handler = _http_ai_dialogue,//注册时间回调
-        .skip_cert_common_name_check = true,
-    };
-    esp_http_client_handle_t client = esp_http_client_init(&config);
-    if (client == NULL) {
-        ESP_LOGE(TAG, "Failed to initialize HTTP client");
-        return NULL;
-    }
 
-    esp_http_client_set_header(client, "Content-Type", "application/json");
-    esp_http_client_set_header(client, "Authorization", MINIMAX_API_KEY);
-
-    esp_http_client_set_post_field(client, request_body, strlen(request_body));
-
-    esp_err_t err = esp_http_client_perform(client);
-    if (err == ESP_OK) {
-        int status_code = esp_http_client_get_status_code(client);
-        if (status_code == 200) {
-            int content_length = esp_http_client_get_content_length(client);
-            if (content_length <= 0) {
-                ESP_LOGE(TAG, "Invalid content length: %d", content_length);
-                esp_http_client_cleanup(client);
-                return NULL;
-            }
-
-            char* response_body = malloc(content_length + 1); // 分配内存
-            if (response_body == NULL) {
-                ESP_LOGE(TAG, "Failed to allocate memory for response body");
-                esp_http_client_cleanup(client);
-                return NULL;
-            }
-
-            esp_http_client_read(client, response_body, content_length);
-            response_body[content_length] = '\0'; // 添加字符串结束符
-
-            cJSON* response = cJSON_Parse(response_body);
-            if (response == NULL) {
-                ESP_LOGE(TAG, "Failed to parse JSON response");
-                free(response_body);
-                esp_http_client_cleanup(client);
-                return NULL;
-            }
-
-            cJSON* ai_response_json = cJSON_GetObjectItem(response, "text");
-            if (ai_response_json == NULL) {
-                ESP_LOGE(TAG, "Failed to get AI response from JSON response");
-                cJSON_Delete(response);
-                free(response_body);
-                esp_http_client_cleanup(client);
-                return NULL;
-            }
-
-            char* ai_response = strdup(ai_response_json->valuestring); // 复制AI响应
-            cJSON_Delete(response);
-            free(response_body);
-            esp_http_client_cleanup(client);
-            return ai_response;
-        } else {
-            ESP_LOGE(TAG, "HTTP request failed, status code: %d", status_code);
-        }
-    } else {
-        ESP_LOGE(TAG, "HTTP request failed, error: %s", esp_err_to_name(err));
-    }
-
-    esp_http_client_cleanup(client);
-    return NULL;
+void http_init(){
+    http_speech_to_text_event_queue = xQueueCreate(10, 1024);  
+    http_ai_dialogue_event_queue = xQueueCreate(10, 1024);  
+    http_tts_event_queue = xQueueCreate(10, 1024); 
+    xTaskCreate(app_ask_tongyi_task, "ask tongyi",  4 * 2048, NULL, 10, NULL);
+    xTaskCreate(http_tts_dialogue, "http_tts_dialogue", 4* 2048, NULL, 10, NULL);
 }
