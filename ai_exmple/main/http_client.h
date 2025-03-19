@@ -11,7 +11,7 @@
 
 
 
-void http_speech_to_text(const char* audio_data, size_t audio_length);
+void http_speech_to_text(char* audio_data, size_t audio_length);
 //char* http_ai_dialogue(const char* text);
 void http_init();
 

@@ -64,7 +64,7 @@ static void read_audio_task(void* arg)
             }
 
             // 分配内存
-            wav_raw_buffer = heap_caps_malloc(wav_file_size, MALLOC_CAP_SPIRAM);
+            wav_raw_buffer = heap_caps_malloc(wav_file_size +1 , MALLOC_CAP_SPIRAM);
             if (wav_raw_buffer == NULL) {
                 ESP_LOGE(TAG, "Failed to allocate WAV buffer");
                 read_start_flag = 1;
@@ -89,11 +89,11 @@ static void read_audio_task(void* arg)
             http_speech_to_text(wav_raw_buffer, wav_file_size);
 
             // 释放内存
-            free(wav_raw_buffer);
+            //free(wav_raw_buffer);
         }
 
         // 延时 1 秒
-        vTaskDelay(pdMS_TO_TICKS(1000));
+        vTaskDelay(pdMS_TO_TICKS(100));
     }
 }
 

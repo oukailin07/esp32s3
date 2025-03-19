@@ -71,7 +71,7 @@ void hal_i2s_record(char *file_path, int record_time)
     fwrite(&wav_header, sizeof(wav_header), 1, f);
 
     while (record_info.flash_wr_size < record_info.bytes_all) {
-        char *i2s_raw_buffer = heap_caps_calloc(1, record_info.sample_size, MALLOC_CAP_DMA);
+        char *i2s_raw_buffer = heap_caps_calloc(1, record_info.sample_size, MALLOC_CAP_SPIRAM);
         if (i2s_raw_buffer == NULL) {
             continue;
         }
