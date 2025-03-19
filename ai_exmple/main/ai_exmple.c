@@ -45,7 +45,7 @@ static void read_audio_task(void* arg)
         // 等待队列消息
         if (xQueueReceive(read_start, &read_start_flag, portMAX_DELAY) == pdPASS) {
             // 录制音频并保存到文件
-            hal_i2s_record("/spiffs/record.wav", 2);
+            hal_i2s_record("/spiffs/record.wav", 4);
 
             // 打开 WAV 文件
             wav_file = fopen("/spiffs/record.wav", "r");

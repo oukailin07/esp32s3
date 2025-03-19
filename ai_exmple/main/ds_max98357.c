@@ -30,7 +30,7 @@ void i2s_speaker_init() {
         },
     };
     std_cfg.slot_cfg.slot_mask = I2S_STD_SLOT_LEFT; // 修改为左声道
-    std_cfg.slot_cfg.bit_order_lsb = true;          // 低位先行,这边我不确定,但采集的数据确实受环境声音的改变而改变,高位先行却没有
+    std_cfg.slot_cfg.bit_order_lsb = false;          // 低位先行,这边我不确定,但采集的数据确实受环境声音的改变而改变,高位先行却没有
  
     i2s_channel_init_std_mode(tx_handle, &std_cfg);
     i2s_channel_enable(tx_handle);

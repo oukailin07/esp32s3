@@ -27,7 +27,7 @@ esp_http_client_handle_t stt_client;
 esp_http_client_handle_t token_client;
 esp_http_client_handle_t tongyiqianwen_client;
 char *tts_url = "https://tsn.baidu.com/text2audio";
-char *formate = "tex=%s&tok=%s&cuid=mpBNOBqqTHmz93GbNEZDm5vUnwV0Lnm1&ctp=1&lan=zh&spd=5&pit=5&vol=5&per=4&aue=4"; // PCM 16K
+char *formate = "tex=%s&tok=%s&cuid=mpBNOBqqTHmz93GbNEZDm5vUnwV0Lnm1&ctp=1&lan=zh&spd=5&pit=5&vol=10&per=111&aue=4"; // PCM 16K
 char *client_id = "HKXvSjLc5Co28bjtvVIXkVuE";
 char *client_secret = "pzVcTIXM8K2mTHWuPWZVMZceoQqjptMf";
 char token[256] = {0};
@@ -270,7 +270,7 @@ void app_ask_tongyi_task(void *pvParameters) {
         // 检查堆内存完整性
         heap_caps_check_integrity_all(true);
         ESP_LOGI(TAG, "app_ask_tongyi_task end----");
-        vTaskDelay(pdMS_TO_TICKS(1000)); // 延时 1 秒
+        vTaskDelay(pdMS_TO_TICKS(100)); // 延时 1 秒
     }
 }
 
@@ -413,11 +413,39 @@ void http_speech_to_text(char* wav_raw_buffer, size_t wav_file_size) {
     ESP_LOGI(TAG, "http_speech_to_text end----");
 }
 
+#define MAX_AUDIO_BUFFER_SIZE (1024 * 1024) // 定义最大音频缓存大小
+
+static uint8_t *audio_buffer = NULL; // 全局缓存区
+static size_t audio_buffer_size = 0; // 当前缓存区大小
+
 esp_err_t app_http_baidu_tts_event_handler(esp_http_client_event_t *evt)
 {
     if (evt->event_id == HTTP_EVENT_ON_DATA) {
         ESP_LOGI(TAG, "Received length:%d", evt->data_len);
-        //i2s_channel_write(tx_handle, (char *)evt->data, evt->data_len, NULL, 100);
+
+        if (audio_buffer == NULL) {
+            audio_buffer = heap_caps_malloc(168960, MALLOC_CAP_SPIRAM);
+            if (audio_buffer == NULL) {
+                ESP_LOGE(TAG, "Failed to malloc audio buffer");
+                return ESP_FAIL;
+            }
+        }
+        memcpy(audio_buffer + audio_buffer_size, evt->data, evt->data_len);
+        audio_buffer_size += evt->data_len;
+        
+        
+    }
+    else if (evt->event_id == HTTP_EVENT_ON_FINISH) {
+        // 数据接收完成，开始播放
+        if (audio_buffer != NULL && audio_buffer_size > 0) {
+            ESP_LOGI(TAG, "All data received, total size: %d", audio_buffer_size);
+            i2s_channel_write(tx_handle, audio_buffer, audio_buffer_size, NULL, portMAX_DELAY);
+
+            // 释放缓存区
+            free(audio_buffer);
+            audio_buffer = NULL;
+            audio_buffer_size = 0;
+        }
     }
 
     return ESP_OK;
@@ -452,7 +480,11 @@ void http_tts_dialogue(void* arg)
             esp_http_client_config_t config = {
                 .method = HTTP_METHOD_POST,
                 .event_handler = app_http_baidu_tts_event_handler,
-                .buffer_size = 10 * 1024,
+                .buffer_size = 20 * 1024,  // 20 KB
+                .buffer_size_tx = 20 * 1024,  // 20 KB 发送缓冲
+                .timeout_ms = 30000, // 设置超时时间为 10 秒
+                .transport_type = HTTP_TRANSPORT_OVER_SSL,
+                
             };
 
             config.url = tts_url;
