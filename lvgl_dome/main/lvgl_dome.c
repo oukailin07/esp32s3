@@ -5,7 +5,7 @@
 #include "lvgl.h"
 #include "lv_port_disp.h"
 #include "lv_port_indev.h"
-#include "lv_demos.h"
+//#include "lv_demos.h"
 #include "lib_lcd7735.h"
 static esp_timer_handle_t lvgl_tick_timer = NULL;
  
@@ -40,8 +40,13 @@ void app_main(void)
     // lv_obj_set_size(switch_obj, 120, 50);
     // lv_obj_align(switch_obj, LV_ALIGN_CENTER, 0, 0);
  
-    lv_demo_music();
-    
+    //lv_demo_music();
+    //很简单,只需要修改一下对应的变量名即可
+ 
+    LV_IMG_DECLARE(test);
+    lv_obj_t* img = lv_gif_create(lv_scr_act());
+    lv_gif_set_src(img, &test);
+    lv_obj_align(img, LV_ALIGN_CENTER, 0, 0);
     
     while (1) 
     {
