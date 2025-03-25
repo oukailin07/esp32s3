@@ -11,13 +11,14 @@
     This example shows how to scan for available set of APs.
 */
 #include <string.h>
+#include <stdint.h>
 #include "freertos/FreeRTOS.h"
 #include "freertos/event_groups.h"
 #include "esp_wifi.h"
 #include "esp_log.h"
 #include "esp_event.h"
 #include "nvs_flash.h"
-
+extern QueueHandle_t wifi_scan_q;
 #define DEFAULT_SCAN_LIST_SIZE 5
 
 static const char *TAG = "scan";
@@ -140,8 +141,7 @@ static void print_cipher_type(int pairwise_cipher, int group_cipher)
 }
 
 /* Initialize Wi-Fi as sta and set scan method */
-void wifi_scan(void)
-{
+void wifi_scan(void) {
     ESP_ERROR_CHECK(esp_netif_init());
     ESP_ERROR_CHECK(esp_event_loop_create_default());
     esp_netif_t *sta_netif = esp_netif_create_default_wifi_sta();
@@ -151,28 +151,45 @@ void wifi_scan(void)
     ESP_ERROR_CHECK(esp_wifi_init(&cfg));
 
     uint16_t number = DEFAULT_SCAN_LIST_SIZE;
-    wifi_ap_record_t ap_info[DEFAULT_SCAN_LIST_SIZE];
+    wifi_ap_record_t ap_records[DEFAULT_SCAN_LIST_SIZE]; // 修改变量名避免冲突
     uint16_t ap_count = 0;
-    memset(ap_info, 0, sizeof(ap_info));
+    memset(ap_records, 0, sizeof(ap_records));
 
     ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_STA));
     ESP_ERROR_CHECK(esp_wifi_start());
-    esp_wifi_scan_start(NULL, true);
-    ESP_LOGI(TAG, "Max AP number ap_info can hold = %u", number);
-    ESP_ERROR_CHECK(esp_wifi_scan_get_ap_records(&number, ap_info));
+    
+    wifi_scan_config_t scan_config = {
+        .scan_type = WIFI_SCAN_TYPE_ACTIVE,
+        .show_hidden = true
+    };
+    
+    ESP_ERROR_CHECK(esp_wifi_scan_start(&scan_config, true));
+    ESP_ERROR_CHECK(esp_wifi_scan_get_ap_records(&number, ap_records));
     ESP_ERROR_CHECK(esp_wifi_scan_get_ap_num(&ap_count));
+    
     ESP_LOGI(TAG, "Total APs scanned = %u, actual AP number ap_info holds = %u", ap_count, number);
+    
     for (int i = 0; i < number; i++) {
-        xQueueSend(wifi_scan_q, ap_info[i], 100);
-        ESP_LOGI(TAG, "SSID \t\t%s", ap_info[i].ssid);
-        ESP_LOGI(TAG, "RSSI \t\t%d", ap_info[i].rssi);
-        print_auth_mode(ap_info[i].authmode);
-        if (ap_info[i].authmode != WIFI_AUTH_WEP) {
-            print_cipher_type(ap_info[i].pairwise_cipher, ap_info[i].group_cipher);
+        // 正确分配内存并复制结构体
+        wifi_ap_record_t *ap_record = malloc(sizeof(wifi_ap_record_t));
+        if (ap_record) {
+            memcpy(ap_record, &ap_records[i], sizeof(wifi_ap_record_t));
+            
+            // 发送到队列
+            if (xQueueSend(wifi_scan_q, &ap_record, pdMS_TO_TICKS(100)) != pdPASS) {
+                ESP_LOGE(TAG, "Failed to send AP record to queue");
+                free(ap_record);
+            }
+            
+            ESP_LOGI(TAG, "SSID \t\t%.32s", ap_record->ssid);
+            ESP_LOGI(TAG, "RSSI \t\t%d", ap_record->rssi);
+            print_auth_mode(ap_record->authmode);
+            if (ap_record->authmode != WIFI_AUTH_WEP) {
+                print_cipher_type(ap_record->pairwise_cipher, ap_record->group_cipher);
+            }
+            ESP_LOGI(TAG, "Channel \t\t%d", ap_record->primary);
         }
-        ESP_LOGI(TAG, "Channel \t\t%d", ap_info[i].primary);
     }
-
 }
 
 // void app_main(void)

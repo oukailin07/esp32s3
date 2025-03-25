@@ -4,7 +4,10 @@ idf_component_register(SRCS "lvgl_dome.c"
                             "lv_port/lv_port_fs.c"
                             "lv_port/lv_port_indev.c"
                             "net/wifi_scan.c"
+                            "lvgl_ui/lvgl_wifi_scan_ui.c"
+                            "lvgl_ui/lv_font_source_han_sans_bold_12.c"
                     INCLUDE_DIRS "." 
                                 "../components/BSP/."
                                 "net/."
-                                "lv_port/.")
+                                "lv_port/."
+                                "lvgl_ui/.")

@@ -17,6 +17,7 @@
 //#include "lv_demos.h"
 #include "lib_lcd7735.h"
 #include "wifi_scan.h"
+#include "lvgl_wifi_scan_ui.h"
 static esp_timer_handle_t lvgl_tick_timer = NULL;
  
 // 定时回调函数，每 1ms 触发
@@ -52,7 +53,8 @@ void app_main(void)
         ret = nvs_flash_init();
     }
     ESP_ERROR_CHECK( ret );
-
+    
+    lvgl_wifi_scan_ui_init();
     wifi_scan();
     while (1) 
     {
