@@ -68,12 +68,12 @@ static void create_header(lv_obj_t *parent) {
     // 开关控件
     lv_obj_t *sw = lv_switch_create(header);
         // 在创建开关后直接设置颜色
-    lv_obj_set_style_bg_color(sw, lv_color_hex(0x00C853), LV_PART_MAIN | LV_STATE_CHECKED);
-    lv_obj_set_style_bg_color(sw, lv_color_hex(0x9E9E9E), LV_PART_MAIN);
+    //lv_obj_set_style_bg_color(sw, lv_color_hex(0x00C853), LV_PART_MAIN | LV_STATE_CHECKED);
+    //lv_obj_set_style_bg_color(sw, lv_color_hex(0x9E9E9E), LV_PART_MAIN);
     // 滑块颜色
-    lv_obj_set_style_bg_color(sw, lv_color_white(), LV_PART_INDICATOR | LV_STATE_CHECKED);
-    lv_obj_set_style_bg_color(sw, lv_color_hex(0xEEEEEE), LV_PART_INDICATOR);
-    lv_obj_set_size(sw, 40, 20);
+    lv_obj_set_style_bg_color(sw, lv_color_hex(0x43CD80), LV_PART_INDICATOR | LV_STATE_CHECKED);
+    lv_obj_set_style_bg_color(sw, lv_color_hex(0x43CD80), LV_PART_INDICATOR);
+    lv_obj_set_size(sw, 30, 15);
     lv_obj_align(sw, LV_ALIGN_RIGHT_MID, -10, 0);
     lv_obj_add_state(sw, LV_STATE_CHECKED);
     
