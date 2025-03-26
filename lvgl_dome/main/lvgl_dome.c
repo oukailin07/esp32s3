@@ -43,9 +43,9 @@ void app_main(void)
     //lv_demo_music();
     //很简单,只需要修改一下对应的变量名即可
  
-    LV_IMG_DECLARE(test);
+    LV_IMG_DECLARE(ezgif);
     lv_obj_t* img = lv_gif_create(lv_scr_act());
-    lv_gif_set_src(img, &test);
+    lv_gif_set_src(img, &ezgif);
     lv_obj_align(img, LV_ALIGN_CENTER, 0, 0);
     
     while (1) 
