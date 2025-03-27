@@ -2,17 +2,77 @@
 #include "lib_lcd7735.h"
 #include "ascii_font.h"
 //#include "LCD_ST7735.h"
+#include "esp_log.h"
 #include <string.h>
 #include "driver/gpio.h"
 #include "driver/spi_master.h"
+// 定义屏幕尺寸和块大小
+#define SCREEN_WIDTH  128
+#define SCREEN_HEIGHT 160
+#define BLOCK_HEIGHT  20  // 每次传输20行数据
+static uint16_t block_buf[BLOCK_HEIGHT][SCREEN_WIDTH];
+spi_device_handle_t tft_hspi = NULL;					///<spi�豸���?
 
-spi_device_handle_t tft_hspi = NULL;					///<spi�豸���?
+static const char *TAG = "st7735";
 static void lcdSelectRegister(unsigned char data);
 static void lcdWriteDataU8(unsigned char data);
 static void lcdWriteDataU16(unsigned short data);
 
 static void SpiSend(uint8_t *data, uint8_t dataLength);
 
+// 新增优化后的SPI发送函数（支持大块数据传输）
+static void SpiSendLarge(const void* data, size_t length)
+{
+    spi_transaction_t trans = {
+        .length = length * 8,  // 位数
+        .tx_buffer = data,
+        .flags = 0  // 移除SPI_TRANS_USE_TXDATA标志
+    };
+    
+    esp_err_t ret = spi_device_polling_transmit(tft_hspi, &trans);
+    if(ret != ESP_OK) {
+       // ESP_LOGE("LCD", "SPI transmit failed: %d", ret);
+    }
+}
+// 优化后的地址设置函数（支持行模式）
+static void lcdSetRowAddress(uint16_t y)
+{
+    lcdSelectRegister(0x2A);  // 列地址设置
+    lcdWriteDataU16(0);
+    lcdWriteDataU16(LCD_ROW_SIZE);
+    
+    lcdSelectRegister(0x2B);  // 行地址设置
+    lcdWriteDataU16(y);
+    lcdWriteDataU16(y);
+    
+    lcdSelectRegister(0x2C);  // 内存写入
+}
+
+// 清屏函数
+void lcdClear(uint16_t color)
+{
+    // 填充块缓冲区
+    for(int y = 0; y < BLOCK_HEIGHT; y++) {
+        for(int x = 0; x < SCREEN_WIDTH; x++) {
+            block_buf[y][x] = color;
+        }
+    }
+
+    // 设置全屏地址
+    lcdSetAddress(0, 0, SCREEN_WIDTH-1, SCREEN_HEIGHT-1);
+    
+    // 分块发送
+    uint16_t full_blocks = SCREEN_HEIGHT / BLOCK_HEIGHT;
+    for(uint16_t block = 0; block < full_blocks; block++) {
+        SpiSendBlock(block_buf, sizeof(block_buf));
+    }
+    
+    // 处理剩余行
+    uint16_t remaining_lines = SCREEN_HEIGHT % BLOCK_HEIGHT;
+    if(remaining_lines > 0) {
+        SpiSendBlock(block_buf, sizeof(uint16_t) * SCREEN_WIDTH * remaining_lines);
+    }
+}
 /**
   * @brief spi��������
   * @note  ���޸������Լ���ͬ��Ӳ��
@@ -24,7 +84,7 @@ static void SpiSend(uint8_t *data, uint8_t dataLength)
 {
 
 	//spi��������
-	spi_transaction_t ext;  		///<����̶����Ƚṹ��?
+	spi_transaction_t ext;  		///<����̶����Ƚṹ��?
 	memset(&ext, 0, sizeof(ext));  	///<�����ڴ�
 	//ext.command_bits = 0;  		///<
 	ext.rxlength = 0 ;				///<����
@@ -55,17 +115,17 @@ void LcdGpioSpiInit(void)
 	};
 	gpio_config(&lcd_io);
 
-	//��������  add your code
-	spi_bus_config_t buscfg = {
-		.miso_io_num = -1,   			///<gpio12->miso
-		.mosi_io_num = LCD_PIN_SDA,    	///<gpio13->mosi
-		.sclk_io_num = LCD_PIN_SCL,   	///<gpio14-> sclk
-		.quadwp_io_num = -1,
-		.quadhd_io_num = -1,
-		.flags = SPICOMMON_BUSFLAG_MASTER , //SPI��ģʽ
-		.max_transfer_sz = 4096 * 8,
-	};
-		//buscfg.intr_flags = 0;  							///<�����������SPIͨѶ����ص��жϺ������ж����ȼ���?0��Ĭ�ϡ�
+   // 修改SPI总线配置
+   spi_bus_config_t buscfg = {
+	.miso_io_num = -1,
+	.mosi_io_num = LCD_PIN_SDA,
+	.sclk_io_num = LCD_PIN_SCL,
+	.quadwp_io_num = -1,
+	.quadhd_io_num = -1,
+	.max_transfer_sz = sizeof(block_buf),  // 增加最大传输尺寸
+	.flags = SPICOMMON_BUSFLAG_MASTER ,
+};
+		//buscfg.intr_flags = 0;  							///<�����������SPIͨѶ����ص��жϺ������ж����ȼ���?0��Ĭ�ϡ�
 	esp_err_t tft_spi_f = spi_bus_initialize(LCD_SPI_HOST, &buscfg, SPI_DMA_CH_AUTO);		///<���߳�ʼ��������ʹ��DMA����
 	if (tft_spi_f != ESP_OK) {
 		printf("--tft--spi--bus--initialize--err,%d\n", tft_spi_f);						///<������Ϣ��ӡ
@@ -88,7 +148,8 @@ void LcdGpioSpiInit(void)
 		.pre_cb=NULL,
 		.post_cb=NULL,//NULL
 		.duty_cycle_pos = 0,
-		.queue_size = 6 					///<������еĳ��ȣ���ʾ������ͨѶ��ʱ�������ٸ�spiͨѶ�����ж�ͨѶģʽ��ʱ���ѵ�ǰspiͨѶ���̹��𵽶�����
+		.queue_size = 7, 	
+		.flags = SPI_DEVICE_NO_DUMMY,				///<������еĳ��ȣ���ʾ������ͨѶ��ʱ�������ٸ�spiͨѶ�����ж�ͨѶģʽ��ʱ���ѵ�ǰspiͨѶ���̹��𵽶�����
 	};
 
 	tft_spi_f = spi_bus_add_device(LCD_SPI_HOST, &interface_config, &tft_hspi);		///<����spi�豸
@@ -121,22 +182,6 @@ static void lcdWriteDataU16(unsigned short data)
 	lcdWriteDataU8(data >> 8);
 	lcdWriteDataU8(data);
 
-	// SET_LCD_A0;
-	// #if !(LCD_HARDWARE_CS)
-
-	//--*ESP32 ����С��оƬ���� uint16_t �� uint32_t ������������?λ�洢����С�ĵ�ַ����ˣ���� uint16_t �洢���ڴ��У������ȷ���λ [7:0]��������? [15:8]��*/
-	/*idf����ֲ�? :��ĳЩ����£��?��������ݴ�С��? uint8_t ���鲻ͬ����ʹ�����º꽫����ת��Ϊ���� SPI ����ֱ�ӷ��͵ĸ�ʽ��
-		�贫������ݣ�ʹ��? SPI_SWAP_DATA_TX
-		���յ������ݣ�ʹ�� SPI_SWAP_DATA_RX
-		*/
-	// 	CLR_LCD_CS;	 ///<ʹ���豸
-	// #endif
-	// //LCD_DELAY(1);
-	// SpiSend((uint8_t*)&data,2);
-	// //LCD_DELAY(1);
-	// #if !(LCD_HARDWARE_CS)
-	// 	SET_LCD_CS;
-	// #endif
 
 }
 
@@ -286,24 +331,12 @@ void lcdSetAddress(unsigned short x1, unsigned short y1, unsigned short x2, unsi
 	lcdSelectRegister(0x2C);	///<Memory Write
 }
 
-//����
-void lcdClear(unsigned short color)
-{
-	lcdSetAddress(0, 0, LCD_ROW_SIZE, LCD_COLUMN_SIZE);///<������Ļ��С
 
-	for (unsigned char i = 0; i <= LCD_ROW_SIZE; i++)
-	{
-		for (unsigned char j = 0; j <= LCD_COLUMN_SIZE; j++)
-		{
-			lcdWriteDataU16(color);
-		}
-	}
-}
 
 //LCD����
 void LCD_DrawPoint(uint16_t x, uint16_t y, uint16_t color)
 {
-	lcdSetAddress(x, y, x, y);//���ù��λ��?
+	lcdSetAddress(x, y, x, y);//���ù��λ��?
 	lcdWriteDataU16(color);
 }
 
@@ -326,468 +359,84 @@ void LCD_DisplayOff(void)
 	lcdSelectRegister(0x28);	//�ر���ʾ
 }
 
-//��ָ����������䵥�����?
-//(sx,sy),(ex,ey):�����ζԽ�����,�����С�?:(ex-sx+1)*(ey-sy+1)
-//color:Ҫ������ɫ
-void LCD_flush(unsigned short sx, unsigned short sy, unsigned short ex, unsigned short ey, unsigned short *color_p)
+// 块写入函数（一次写入20行）
+static void LCD_WriteBlock(uint16_t sx, uint16_t sy, uint16_t width, uint16_t height, uint16_t *color_p)
 {
-	unsigned short i, j;
-	unsigned short xlen = 0;
-	unsigned short ylen = 0;
-
-	xlen = ex - sx + 1;
-	ylen = ey - sy + 1;
-
-	lcdSetAddress(sx, sy, ex, ey);
-	for (i = 0; i < xlen; i++)
-	{
-		for (j = 0; j < ylen; j++)
-		{
-			uint16_t color = color_p[i * ylen + j];
-			lcdWriteDataU16(color);
-		}
-	}
+    // 设置块区域地址
+    lcdSetAddress(sx, sy, sx + width - 1, sy + height - 1);
+	CLR_LCD_CS;
+	SET_LCD_A0;   
+    // 发送整个块数据
+    SpiSendBlock(color_p, sizeof(uint16_t) * width * height);
+	SET_LCD_CS;
 }
 
-void LCD_Fill(unsigned short sx, unsigned short sy, unsigned short ex, unsigned short ey, unsigned short color)
+
+// 实现块传输函数
+static void SpiSendBlock(const void* data, size_t length)
 {
-	unsigned short i, j;
-	unsigned short xlen = 0;
-	unsigned short ylen = 0;
-
-	xlen = ex - sx + 1;
-	ylen = ey - sy + 1;
-
-	lcdSetAddress(sx, sy, ex, ey);
-	for (i = 0; i < xlen; i++)
-	{
-		for (j = 0; j < ylen; j++)
-		{
-			lcdWriteDataU16(color);
-		}
-	}
+    spi_transaction_t trans = {
+        .length = length * 8,  // 位数
+        .tx_buffer = data,
+        .flags = 0
+    };
+    
+    esp_err_t ret = spi_device_polling_transmit(tft_hspi, &trans);
+    if(ret != ESP_OK) {
+        ESP_LOGE("LCD", "SPI block transmit failed: %d", ret);
+    }
 }
-
-//����
-//x1,y1:�������?
-//x2,y2:�յ�����
-void LCD_DrawLine(unsigned short x1, unsigned short y1, unsigned short x2, unsigned short y2, unsigned short color)
+// 区域填充函数
+void LCD_Fill(uint16_t sx, uint16_t sy, uint16_t ex, uint16_t ey, uint16_t color)
 {
-	unsigned short t;
-	int xerr = 0, yerr = 0, delta_x, delta_y, distance;
-	int incx, incy, uRow, uCol;
-	delta_x = x2 - x1; //������������
-	delta_y = y2 - y1;
-	uRow = x1;
-	uCol = y1;
+    const uint16_t width = ex - sx + 1;
+    const uint16_t height = ey - sy + 1;
 
-	//���õ�������
-	if ( delta_x > 0 )
-	{
-		incx = 1;
-	}
-	else if ( delta_x == 0 ) //��ֱ��
-	{
-		incx = 0;
-	}
-	else
-	{
-		incx = -1;
-		delta_x = -delta_x;
-	}
+    // 填充块缓冲区
+    for(int y = 0; y < BLOCK_HEIGHT && y < height; y++) {
+        for(int x = 0; x < width; x++) {
+            block_buf[y][x] = color;
+        }
+    }
 
-
-	if ( delta_y > 0 )
-	{
-		incy = 1;
-	}
-	else if ( delta_y == 0 ) //ˮƽ��
-	{
-		incy = 0;
-	}
-	else
-	{
-		incy = -1;
-		delta_y = -delta_y;
-	}
-
-	if ( delta_x > delta_y ) //ѡȡ��������������
-	{
-		distance = delta_x;
-	}
-	else
-	{
-		distance = delta_y;
-	}
-
-	for (t = 0; t <= distance + 1; t++ ) //�������?
-	{
-		LCD_DrawPoint(uRow, uCol, color);//����
-		xerr += delta_x ;
-		yerr += delta_y ;
-		if ( xerr > distance )
-		{
-			xerr -= distance;
-			uRow += incx;
-		}
-
-		if ( yerr > distance )
-		{
-			yerr -= distance;
-			uCol += incy;
-		}
-	}
-}
-/// @brief ���ƾ���
-/// @param x1 	stort x
-/// @param y1 	stort y
-/// @param x2 	end	x
-/// @param y2 	end y
-/// @param color ��ɫ
-void LCD_DrawRectangle(unsigned short x1, unsigned short y1, unsigned short x2, unsigned short y2, unsigned short color)
-{
-	LCD_DrawLine(x1, y1, x2, y1, color);
-	LCD_DrawLine(x1, y1, x1, y2, color);
-	LCD_DrawLine(x1, y2, x2, y2, color);
-	LCD_DrawLine(x2, y1, x2, y2, color);
-}
-
-//��ָ��λ�û�һ��ָ����С��Բ
-//(x,y):���ĵ�
-//r    :�뾶
-void LCD_Draw_Circle(unsigned short x0, unsigned short y0, unsigned char r, unsigned short color)
-{
-	int a, b;
-	int di;
-	a = 0;
-	b = r;
-	di = 3 - ( r << 1 );           //�ж��¸���λ�õı�־
-	while ( a <= b )
-	{
-		LCD_DrawPoint(x0 + a, y0 - b, color);
-		LCD_DrawPoint(x0 + b, y0 - a, color);
-		LCD_DrawPoint(x0 + b, y0 + a, color);
-		LCD_DrawPoint(x0 + a, y0 + b, color);
-		LCD_DrawPoint(x0 - a, y0 + b, color);
-		LCD_DrawPoint(x0 - b, y0 + a, color);
-		LCD_DrawPoint(x0 - a, y0 - b, color);
-		LCD_DrawPoint(x0 - b, y0 - a, color);
-		a++;
-		//ʹ��Bresenham�㷨��Բ
-		if ( di < 0 )
-		{
-			di += 4 * a + 6;
-		}
-		else
-		{
-			di += 10 + 4 * ( a - b );
-			b--;
-		}
-	}
-}
-
-//��ָ��λ�û�һ��ָ����С��Բ
-//(x,y):���ĵ�
-//r    :�뾶
-void LCD_DrawFullCircle(unsigned short Xpos, unsigned short Ypos, unsigned short Radius, unsigned short Color)
-{
-	uint16_t x, y, r = Radius;
-	for (y = Ypos - r; y < Ypos + r; y++)
-	{
-		for (x = Xpos - r; x < Xpos + r; x++)
-		{
-			if (((x - Xpos) * (x - Xpos) + (y - Ypos) * (y - Ypos)) <= r * r)
-			{
-				LCD_DrawPoint(x, y, Color);
-			}
-		}
-	}
-}
-
-// void LCD_ShowChar8(unsigned short x, unsigned short y, unsigned char ch, unsigned char font_size,  unsigned short pen_color, unsigned short back_color)
-// {
-// 	int i = 0, j = 0;
-// 	unsigned char temp = 0;
-// 	unsigned char size = 0;
-
-
-// 	 if((x > (LCD_COLUMN_SIZE - font_size / 2)) || (y > (LCD_ROW_SIZE - font_size)))
-// 		 return;
-
-// 	 ch = ch - ' ';
-// 	 if(font_size == 8)
-// 	 {
-
-//  			size = (font_size / 8 + ((font_size % 8) ? 1 : 0)) * (font_size / 2);
-
-// 			for(i = 0; i < size; i++)
-// 			{
-// 				  temp = asc2_0804[ch][i];
-
-// 					for(j = 0; j < 4; j++)
-// 					{
-// 							if(temp & 0x80)
-// 							LCD_DrawPoint(x, y, pen_color);
-// 							else
-// 							LCD_DrawPoint(x, y, back_color);
-
-// 							temp <<= 1;
-// 					}
-// 			}
-// 	 }
-// 	}
-//��ָ��λ����ʾһ���ַ�
-//x,y:��ʼ����
-//num:Ҫ��ʾ���ַ�:" "--->"~"
-//size:������? 12/16/24
-//mode:���ӷ�ʽ(1)���Ƿǵ��ӷ�ʽ(0)
-void LCD_ShowChar(unsigned short x, unsigned short y, unsigned char num, unsigned char size, unsigned char mode, unsigned short pen_color, unsigned short back_color)
-{
-    unsigned char temp, t1, t;
-	unsigned short y0 = y;
-	unsigned char csize = ( size / 8 + ( (size % 8) ? 1 : 0)) * (size / 2); //�õ�����һ���ַ���Ӧ������ռ���ֽ���
- 	num = num - ' ';//�õ�ƫ�ƺ��ֵ��ASCII�ֿ��Ǵӿո�ʼȡģ������-' '���Ƕ�Ӧ�ַ����ֿ⣩
-
-	for(t = 0; t < csize; t++)
-	{
-		// if(size == 8)//����0804���壨�����ã�
-		// {
-		// 	temp = asc2_0804[num][t];
-		// }
-		if(size == 12)//����1206����
-		{
-			temp = asc2_1206[num][t];
-		}
-		else if(size == 16)//����1608����
-		{
-			temp=asc2_1608[num][t];
-		}
-		else if(size == 24)	//����2412����
-		{
-			temp=asc2_2412[num][t];
-		}
-		else
-			return; //û�е��ֿ�
-
-		for(t1 = 0; t1 < 8; t1++)
-		{
-			if( temp & 0x80 )
-			{
-				LCD_DrawPoint(x, y, pen_color);
-			}
-			else if( mode == 0)
-			{
-				LCD_DrawPoint(x, y, back_color);
-			}
-			temp <<= 1;
-			y++;
-
-			if(y >= LCD_COLUMN_SIZE)//������
-			{
-				return;
-			}
-
-			if((y-y0) == size)
-			{
-				y = y0;
-				x++;
-				if(x>=LCD_ROW_SIZE)//������
-				{
-					return;
-				}
-				break;
-			}
-		}
-	}
-}
-
-//��ʾ�ַ���
-//x,y:�������?
-//width,height:������?
-//size:������?
-//*p:�ַ�����ʼ��ַ
-void LCD_ShowString(unsigned short x, unsigned short y, unsigned short width, unsigned short height, unsigned char size, unsigned char *p, unsigned short pen_color, unsigned short back_color)
-{
-	unsigned char x0 = x;
-	width += x;
-	height += y;
-    while((*p<='~')&&(*p>=' '))//�ж��ǲ��ǷǷ��ַ�!
-    {
-        if(x >= width)
-		{
-			x = x0;
-			y += size;
-		}
-
-        if(y >= height)//�˳�
-		{
-			break;
-		}
-
-        LCD_ShowChar(x, y, *p, size, 0, pen_color, back_color);
-        x += size / 2;
-        p++;
+    // 分块处理
+    uint16_t full_blocks = height / BLOCK_HEIGHT;
+    uint16_t remaining_lines = height % BLOCK_HEIGHT;
+    
+    for(uint16_t block = 0; block < full_blocks; block++) {
+        uint16_t current_y = sy + block * BLOCK_HEIGHT;
+        LCD_WriteBlock(sx, current_y, width, BLOCK_HEIGHT, (uint16_t*)block_buf);
+    }
+    
+    // 处理剩余行
+    if(remaining_lines > 0) {
+        uint16_t current_y = sy + full_blocks * BLOCK_HEIGHT;
+        LCD_WriteBlock(sx, current_y, width, remaining_lines, (uint16_t*)block_buf);
     }
 }
 
-uint32_t LCD_Pow(uint8_t m,uint8_t n)
+// 刷屏函数
+void LCD_flush(uint16_t sx, uint16_t sy, uint16_t ex, uint16_t ey, uint16_t *color_p)
 {
-	uint32_t result=1;
-	while(n--)result*=m;
-	return result;
+    const uint16_t width = ex - sx + 1;
+    const uint16_t total_height = ey - sy + 1;
+    
+    // 计算完整块数量
+    uint16_t full_blocks = total_height / BLOCK_HEIGHT;
+    // 剩余行数
+    uint16_t remaining_lines = total_height % BLOCK_HEIGHT;
+    
+    // 处理完整块
+    for(uint16_t block = 0; block < full_blocks; block++) {
+        uint16_t current_y = sy + block * BLOCK_HEIGHT;
+        LCD_WriteBlock(sx, current_y, width, BLOCK_HEIGHT, 
+                      color_p + block * BLOCK_HEIGHT * width);
+    }
+    
+    // 处理剩余行
+    if(remaining_lines > 0) {
+        uint16_t current_y = sy + full_blocks * BLOCK_HEIGHT;
+        LCD_WriteBlock(sx, current_y, width, remaining_lines,
+                      color_p + full_blocks * BLOCK_HEIGHT * width);
+    }
 }
-//��ʾ����
-//x,y:�������?
-//len:���ֵ�λ��
-//size:������?
-//num:Ҫ��ʾ������,0~4294967295
-void LCD_ShowNum(unsigned short x, unsigned short y, unsigned short len, unsigned short size, unsigned long num, unsigned short pen_color, unsigned short back_color)
-{
-	unsigned short t,temp;
-	for(t=0;t<len;t++)
-	{
-		temp=(num/LCD_Pow(10,len-t-1))%10;
-			if(temp==0)
-			{
-				LCD_ShowChar(x+(size/2)*t,y,'0',size,0, pen_color, back_color);
-		  }
-			else
-	 	LCD_ShowChar(x+(size/2)*t,y,temp+'0',size,0, pen_color, back_color);
-	}
-}
-
-// //��������ʾ
-// //˵������������ȡģ���������õ� ָ���ĺ��� ���ִ�С��16x16	 ��32���ֽڴ洢һ������
-// // 		�ⲿ�ֺ����Ǵ��ڳ���ռ�? ���Ժ��ֵĶ���ֱ��Ӱ�����ռ��ʣ����?
-// //      ��Ҫ�����ھ���ʾ����ָ���ĺ�����˵�Ͳ��õ����ֿ���
-// //x  y  Ҫ��ʾ���ֵ�����
-// //c[2]  ���ֵ����� һ�����������ֽڱ�ʾ
-// //dcolor ���ֵ���ɫ   bgcolor ������ɫ
-// void GUI_sprintf_hz1616(unsigned short x, unsigned short y, unsigned char c[2], unsigned short pen_color, unsigned short back_color)
-// {
-// 	unsigned char i, j, k, m; //������ʱ����
-// 	unsigned short x0, y0;
-// 	x0 = x;
-// 	y0=y;
-// 	lcdSetAddress(x, y, x + 16 - 1, y + 16 - 1); //ѡ������λ��
-
-// 	for (k = 0; k < 64; k++) //64��ʾ�Խ����ֿ��еĸ������糬������������
-// 	{
-// 		if ((code_GB_16[k].Index[0]==c[0]) && (code_GB_16[k].Index[1]==c[1])) //Ѱ�Ҷ�Ӧ����	 һ��������Ҫ�����ֽ�
-// 		{
-// 			for(i = 0; i < 32; i++) //32���ֽ� ÿ���ֽڶ�Ҫһ����һ���㴦�� �����Ǵ�����32X8��
-// 			{
-// 				m = code_GB_16[k].Msk[i];							//��ȡ��Ӧ�ֽ�����
-// 				for(j = 0; j < 8; j++) 									//��ʾһ���ֽ�  һ���ֽ�8λ Ҳ����8����
-// 				{
-// 					//�ж��Ƿ���Ҫд���?
-// 					if( (m&0x80) == 0x80)
-// 					{
-// 						LCD_Fast_DrawPoint(x, y, pen_color); // �����? ��������ɫ
-// 					}
-// 					else
-// 					{
-// 						LCD_Fast_DrawPoint(x, y, back_color); //�������? Ϊ����ɫ  ����ɫ
-// 					}
-// 					m <<= 1; //����һλ  �ж���һ��
-// 					x++;
-
-// 					if(x - x0 == 16)
-// 					{
-// 						x = x0;
-// 						y++;
-// 						if(y - y0 >= 16)
-// 						{
-// 							return;
-// 						}
-// 					}
-// 				}
-// 			}
-// 		}
-// 	}
-// }
-
-// //��ʾ�ַ���
-// //x1 y1 ��ʾ�ĳ�ʼλ��
-// //*str Ҫ��ʾ������
-// //dcolor ��ʾ�ַ�����ɫ
-// //bgcolor ��ʾ�ַ��ı�����ɫ
-// void GUI_sprintf_hz16x(unsigned short x1, unsigned short y1, unsigned char *str, unsigned short pen_color, unsigned short back_color)
-// {
-// 	unsigned char l = 0;
-// 	while(*str)
-// 	{
-// 		if(*str>=0x80)
-// 		{
-// 			GUI_sprintf_hz1616(x1 + l * 8, y1, (unsigned char*)str, pen_color, back_color);
-// 			str += 2;
-// 			l += 2;
-// 		}
-// 	}
-// }
-
-// //��ʾ32x32��������
-// //(x��y) ����ʾ���ݵ����Ͻ����꣬c[2]��ʾ���ֵ������ֽ�
-// //dcolor ���ֵ���ɫ   bgcolor ������ɫ
-// //˵������ָ��λ������ʾһ��32x32�ĺ���
-// void GUI_sprintf_hz3232(unsigned short x, unsigned short y, unsigned char c[2], unsigned short pen_color, unsigned short back_color)
-// {
-// 	unsigned char i, j, k;
-// 	unsigned short x0, y0;
-// 	x0 = x;
-// 	y0 = y;
-
-// 	lcdSetAddress(x, y, x + 32 - 1, y + 32 - 1); //ѡ������λ��
-
-// 	for (k = 0; k < 100; k++) //�Խ����ֿ⣨k���ֵ�ͺ��ֿ��к��ָ����йأ����?����ѯ����
-// 	{
-// 		if ((code_GB_32[k].Index[0]==c[0])&&(code_GB_32[k].Index[1]==c[1])) //Ѱ��Ҫ��ʾ�ĺ���
-// 		{
-// 			for(i = 0; i < 128; i++) //1������Ҫ128���ֽڵ�����ʾ
-// 			{
-// 				unsigned char m = code_GB_32[k].Msk[i]; //һ���ֽ�һ���ֽڵ���ʾ
-// 				for(j = 0; j < 8; j++)
-// 				{
-// 					//�ж��Ƿ���Ҫд���?
-// 					if((m&0x80)==0x80) // �����?,��������ɫ
-// 					{
-// 						LCD_Fast_DrawPoint(x,y,pen_color);
-// 					}
-// 					else //�������?,Ϊ����ɫ
-// 					{
-// 						LCD_Fast_DrawPoint(x,y,back_color);
-// 					}
-// 					m<<=1;
-// 					x++;
-// 					if(x - x0 == 32)
-// 					{
-// 						x = x0;
-// 						y++;
-// 						if(y - y0 >= 32)
-// 						{
-// 							return;
-// 						}
-// 					}
-// 				}
-// 			}
-// 		}
-// 	}
-// }
-
-// //��ʾ32x32���� ��32x16 ��ĸ��
-// //x1��y1����ʾ���ݵ����Ͻ����꣬
-// //dcolor ���ֵ���ɫ   bgcolor ������ɫ
-// //*str Ҫ��ʾ������
-// void GUI_sprintf_hz32x(unsigned short x1, unsigned short y1, unsigned char *str, unsigned short pen_color, unsigned short back_color)
-// {
-// 	unsigned char l = 0;
-// 	while(*str)
-// 	{
-// 		if(*str>=0x80)
-// 		{
-// 			GUI_sprintf_hz3232(x1 + l * 8, y1, (unsigned char*)str, pen_color, back_color);
-// 			l += 4;
-// 			str += 2;
-// 		}
-// 	}
-// }

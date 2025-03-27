@@ -93,25 +93,15 @@ void lcdClear(unsigned short color);
 /// @param x λ��
 /// @param y λ��
 /// @param color ��ɫ
-void LCD_DrawPoint(unsigned short x, unsigned short y, unsigned short color);
-
 
 void LCD_DisplayOn(void); //����ʾ
 void LCD_DisplayOff(void); //����ʾ
-void LCD_Draw_Circle(unsigned short x0, unsigned short y0, unsigned char r, unsigned short color); //��Բ
-void LCD_DrawFullCircle(unsigned short Xpos, unsigned short Ypos, unsigned short Radius, unsigned short Color);
 void LCD_Fill(unsigned short sx, unsigned short sy, unsigned short ex, unsigned short ey, unsigned short color);
 void LCD_flush(unsigned short sx, unsigned short sy, unsigned short ex, unsigned short ey, unsigned short *color_p); //�������
-void LCD_DrawLine(unsigned short x1, unsigned short y1, unsigned short x2, unsigned short y2, unsigned short color); //����
-void LCD_DrawRectangle(unsigned short x1, unsigned short y1, unsigned short x2, unsigned short y2, unsigned short color); //������
-void LCD_ShowChar(unsigned short x, unsigned short y, unsigned char num, unsigned char size, unsigned char mode, unsigned short pen_color, unsigned short back_color); //дASCII�ַ�
-void LCD_ShowString(unsigned short x, unsigned short y, unsigned short width, unsigned short height, unsigned char size, unsigned char *p, unsigned short pen_color, unsigned short back_color); //дASCII�ַ���
-
-// void GUI_sprintf_hz1616(unsigned short x, unsigned short y, unsigned char c[2], unsigned short pen_color, unsigned short back_color);
-// void GUI_sprintf_hz16x(unsigned short x1, unsigned short y1, unsigned char *str, unsigned short dcolor, unsigned short bgcolor);
-void LCD_ShowNum(unsigned short x, unsigned short y, unsigned short len, unsigned short size, unsigned long num, unsigned short pen_color, unsigned short back_color);
-// void GUI_sprintf_hz3232(unsigned short x, unsigned short y, unsigned char c[2], unsigned short pen_color, unsigned short back_color);
-// void GUI_sprintf_hz32x(unsigned short x1, unsigned short y1, unsigned char *str, unsigned short pen_color, unsigned short back_color);
+void lcdClear(uint16_t color);
+static void lcdSetRowAddress(uint16_t y);
+static void SpiSendBlock(const void* data, size_t length);
+static void LCD_WriteBlock(uint16_t sx, uint16_t sy, uint16_t width, uint16_t height, uint16_t *color_p);
 
 #endif
 
