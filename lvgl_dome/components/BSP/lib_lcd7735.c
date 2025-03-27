@@ -9,7 +9,7 @@
 // 定义屏幕尺寸和块大小
 #define SCREEN_WIDTH  128
 #define SCREEN_HEIGHT 160
-#define BLOCK_HEIGHT  20  // 每次传输20行数据
+#define BLOCK_HEIGHT  80  // 每次传输20行数据
 static uint16_t block_buf[BLOCK_HEIGHT][SCREEN_WIDTH];
 spi_device_handle_t tft_hspi = NULL;					///<spi�豸���?
 
@@ -73,17 +73,9 @@ void lcdClear(uint16_t color)
         SpiSendBlock(block_buf, sizeof(uint16_t) * SCREEN_WIDTH * remaining_lines);
     }
 }
-/**
-  * @brief spi��������
-  * @note  ���޸������Լ���ͬ��Ӳ��
-  * @param data ��Ҫ���͵�����
-  * @param dataLength ���ݵĸ���(1BYTE Ϊ��λ)
-  * @return ����״̬
-  */
+
 static void SpiSend(uint8_t *data, uint8_t dataLength)
 {
-
-	//spi��������
 	spi_transaction_t ext;  		///<����̶����Ƚṹ��?
 	memset(&ext, 0, sizeof(ext));  	///<�����ڴ�
 	//ext.command_bits = 0;  		///<
@@ -98,14 +90,8 @@ static void SpiSend(uint8_t *data, uint8_t dataLength)
 }
 
 
-
-/**
-  * @brief spi gpio��ʼ��
-  * @note  ���޸������Լ���ͬ��Ӳ��
-  */
 void LcdGpioSpiInit(void)
 {
-	//--gpio ���� add your code
 	gpio_config_t lcd_io = {
 		.intr_type = GPIO_INTR_DISABLE,
 		.mode = GPIO_MODE_OUTPUT,
@@ -125,25 +111,19 @@ void LcdGpioSpiInit(void)
 	.max_transfer_sz = sizeof(block_buf),  // 增加最大传输尺寸
 	.flags = SPICOMMON_BUSFLAG_MASTER ,
 };
-		//buscfg.intr_flags = 0;  							///<�����������SPIͨѶ����ص��жϺ������ж����ȼ���?0��Ĭ�ϡ�
 	esp_err_t tft_spi_f = spi_bus_initialize(LCD_SPI_HOST, &buscfg, SPI_DMA_CH_AUTO);		///<���߳�ʼ��������ʹ��DMA����
 	if (tft_spi_f != ESP_OK) {
 		printf("--tft--spi--bus--initialize--err,%d\n", tft_spi_f);						///<������Ϣ��ӡ
 	}
-
-	//�豸���ýṹ�� add your code
 	spi_device_interface_config_t interface_config = {
 		.address_bits = 0,
 		.input_delay_ns = 0,
 		.command_bits = 0,
 		.dummy_bits = 0,
-		.clock_speed_hz = 40 * 1000 * 1000,
-		.mode = LCD_SPI_MODE, 				///<����SPIͨѶ����λ���ԺͲ������ء�������mode0-3���֡�Ҫ�����豸�ܹ�ʹ������ģʽ
-#if LCD_HARDWARE_CS						///<��ѡ��Ӳ��CS
-		///����ǰ��Ƭѡ ����ʱ���ٴ����ݲ�Ȼ����ʧ��
-		// .cs_ena_pretrans = 2,
-		// .cs_ena_posttrans = 2,
-		.spics_io_num = -1,	//LCD_PIN_CS,			///<����Ƭѡ��
+		.clock_speed_hz = 80 * 1000 * 1000,
+		.mode = LCD_SPI_MODE, 			
+#if LCD_HARDWARE_CS	
+		.spics_io_num = -1,	//LCD_PIN_CS,			
 #endif
 		.pre_cb=NULL,
 		.post_cb=NULL,//NULL
