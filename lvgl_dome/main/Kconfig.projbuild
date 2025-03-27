@@ -1,0 +1,99 @@
+menu "ST7735 Configuration"
+
+    config ST7735_PIN_SCL
+        int "SCL (Clock) GPIO number"
+        range 0 34
+        default 18
+        help
+            GPIO number for SPI clock line.
+
+    config ST7735_PIN_SDA
+        int "SDA (MOSI) GPIO number"
+        range 0 34
+        default 19
+        help
+            GPIO number for SPI MOSI line.
+
+    config ST7735_PIN_RES
+        int "RESET GPIO number"
+        range 0 34
+        default 4
+        help
+            GPIO number for reset line.
+
+    config ST7735_PIN_DC
+        int "DC (Data/Command) GPIO number"
+        range 0 34
+        default 2
+        help
+            GPIO number for data/command selection.
+
+    config ST7735_PIN_CS
+        int "CS (Chip Select) GPIO number"
+        range 0 34
+        default 5
+        help
+            GPIO number for chip select line.
+
+    config ST7735_PIN_BLK
+        int "Backlight GPIO number"
+        range 0 34
+        default 21
+        help
+            GPIO number for backlight control.
+
+    choice ST7735_SPI_SPEED
+        prompt "SPI Clock Speed"
+        default ST7735_SPI_SPEED_20MHZ
+        help
+            Select SPI clock speed for ST7735 display.
+
+        config ST7735_SPI_SPEED_8MHZ
+            bool "8 MHz"
+        config ST7735_SPI_SPEED_10MHZ
+            bool "10 MHz"
+        config ST7735_SPI_SPEED_20MHZ
+            bool "20 MHz"
+        config ST7735_SPI_SPEED_26MHZ
+            bool "26 MHz"
+        config ST7735_SPI_SPEED_40MHZ
+            bool "40 MHz"
+    endchoice
+
+    config ST7735_USE_CUSTOM_SPI_SPEED
+        bool "Use custom SPI speed"
+        default n
+        help
+            Enable to use custom SPI speed.
+
+    config ST7735_CUSTOM_SPI_SPEED
+        int "Custom SPI speed (MHz)"
+        depends on ST7735_USE_CUSTOM_SPI_SPEED
+        default 20
+        help
+            Custom SPI clock speed in MHz.
+
+    choice ST7735_ORIENTATION
+        prompt "Display Orientation"
+        default ST7735_ORIENTATION_LANDSCAPE
+        help
+            Select display orientation.
+
+        config ST7735_ORIENTATION_PORTRAIT
+            bool "Portrait (128x160)"
+        config ST7735_ORIENTATION_PORTRAIT_INVERTED
+            bool "Portrait Inverted (128x160)"
+        config ST7735_ORIENTATION_LANDSCAPE
+            bool "Landscape (160x128)"
+        config ST7735_ORIENTATION_LANDSCAPE_INVERTED
+            bool "Landscape Inverted (160x128)"
+    endchoice
+
+    config ST7735_ORIENTATION
+        int
+        default 0 if ST7735_ORIENTATION_PORTRAIT
+        default 1 if ST7735_ORIENTATION_PORTRAIT_INVERTED
+        default 2 if ST7735_ORIENTATION_LANDSCAPE
+        default 3 if ST7735_ORIENTATION_LANDSCAPE_INVERTED
+
+endmenu
