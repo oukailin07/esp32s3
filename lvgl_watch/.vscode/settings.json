@@ -1,0 +1,38 @@
+{
+    "idf.customExtraVars": {
+        "IDF_TARGET": "esp32s3"
+    },
+    "idf.openOcdConfigs": [
+        "board/esp32s3-builtin.cfg"
+    ],
+    "files.associations": {
+        "esp_event.h": "c",
+        "nvs_flash.h": "c",
+        "sdmmc_host.h": "c",
+        "bsp_spiffs.h": "c",
+        "esp_log.h": "c",
+        "lv_port_fs.h": "c",
+        "ctype.h": "c",
+        "array": "c",
+        "string": "c",
+        "string_view": "c",
+        "span": "c",
+        "lv_calendar_header_arrow.h": "c",
+        "lvgl.h": "c",
+        "events_init.h": "c",
+        "widgets_init.h": "c",
+        "custom.h": "c",
+        "i2c_master.h": "c",
+        "ledc.h": "c",
+        "esp32_s3_szp.h": "c",
+        "color_types.h": "c",
+        "esp_system.h": "c",
+        "event_groups.h": "c",
+        "sd_card.h": "c",
+        "gui_guider.h": "c",
+        "cstring": "c",
+        "wifi.h": "c"
+    },
+    "idf.portWin": "COM7",
+    "idf.flashType": "UART"
+}
