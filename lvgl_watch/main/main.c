@@ -15,7 +15,7 @@
 #include "freertos/task.h"
 #include "freertos/event_groups.h"
 #include "lvgl.h"
- 
+#include "app_sr.h"
 //#include "lvgl_helpers.h"
  
 #include "gui_guider.h"
@@ -46,15 +46,14 @@ void app_main(void)
     wifi_init();
     app_wifi_init(WIFI_SSID, WIFI_PASS); // 初始化wifi
     save_wifi_info(WIFI_SSID,WIFI_PASS);
-    char ssid[32];
-    char password[64];
-    read_wifi_info(ssid, sizeof(ssid), password, sizeof(password));
-    printf("SSID: %s\n", ssid);
-    printf("Password: %s\n", password);
+
+    app_sr_init();  // 语音识别初始化 
 
     bsp_spiffs_init("ui_img","/img",5);
     sdcard_init();
     setup_ui(&guider_ui);
+
+
 
     //ui_mjpeg_create();
     //tcp_file_start();

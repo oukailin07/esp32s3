@@ -8,6 +8,7 @@ file(GLOB_RECURSE srcs *.c
                     ui/generated/guider_fonts/*.c
                     ui/generated/images/*.c
                     wifi/src/*.c
+                    esp-sr/*.c
                     )
  
 set(include_dirs 
@@ -18,6 +19,7 @@ set(include_dirs
     ui/generated/guider_fonts
     ui/generated/images
     wifi/include
+    esp-sr/
     )
  
 idf_component_register(

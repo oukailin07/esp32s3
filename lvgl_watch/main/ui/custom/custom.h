@@ -64,6 +64,9 @@ void refresh_file_list1(lv_ui *ui);
 void add_file_list_btn(lv_ui *ui ,char *file_name);
 void show_file_list_main(lv_ui *ui);
 void view_file(char * file_name);
+
+void ai_gui_in(void);
+void ai_gui_out(void);
 #ifdef __cplusplus
 }
 #endif

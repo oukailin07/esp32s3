@@ -18,6 +18,7 @@
 #include "gui_guider.h"
 #include "esp_log.h"
 #include "wifi.h"
+#include "esp32_s3_szp.h"
 static const char *TAG = "custom";
 /*********************
  *      DEFINES
@@ -803,4 +804,25 @@ void view_file(char * file_name)
         lv_label_set_text(label, "无法识别的文件类型");
         lv_obj_center(label);
     }
+}
+
+
+lv_obj_t *gif_start;
+
+// AI人出现在屏幕
+void ai_gui_in(void)
+{   
+    lvgl_port_lock(0);
+    gif_start = lv_gif_create(lv_scr_act());
+    lv_gif_set_src(gif_start, "img/disdain.gif");
+    lv_obj_align(gif_start, LV_ALIGN_CENTER, 0, 0);
+    lvgl_port_unlock();
+}
+
+// AI人退出屏幕
+void ai_gui_out(void)
+{
+    lvgl_port_lock(0);
+    lv_obj_del(gif_start);
+    lvgl_port_unlock();
 }

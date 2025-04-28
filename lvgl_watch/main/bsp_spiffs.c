@@ -2,6 +2,7 @@
 static const char *TAG = "bsp_spiffs";
 esp_err_t bsp_spiffs_init(char *partition_label, char *mount_point, size_t max_files)
 {
+    
     esp_vfs_spiffs_conf_t conf = {
         .base_path = mount_point,
         .partition_label = partition_label,
