@@ -53,7 +53,7 @@ void app_main(void)
     bsp_codec_init(); // 音频初始化
     app_sr_init();  // 语音识别初始化 
     setup_ui(&guider_ui);
-    get_weather_from_seniverse(); // 获取天气信息
+    http_rest_with_url(); // 获取天气信息
 
 
     //ui_mjpeg_create();
