@@ -63,6 +63,15 @@ void detect_Task(void *arg)
     esp_mn_commands_add(5, "xia yi shou"); // 下一首
     esp_mn_commands_add(6, "sheng yin da yi dian"); // 声音大一点
     esp_mn_commands_add(7, "sheng yin xiao yi dian"); // 声音小一点
+    esp_mn_commands_add(8, "da kai she xiang tou"); // 打开摄像头
+    esp_mn_commands_add(9, "da kai nao zhong "); // 打开闹钟
+    esp_mn_commands_add(10, "da kai wen jian jia"); // 打开文件夹
+    esp_mn_commands_add(11, "cha kan tian qi"); // 查看天气
+    esp_mn_commands_add(12, "da kai wang luo"); // 打开wifi
+    esp_mn_commands_add(13, "da kai lan ya"); // 打开蓝牙
+    esp_mn_commands_add(14, "liang du an yi dian"); // 亮度暗一点
+    esp_mn_commands_add(15, "liang du liang yi dian"); // 亮度亮一点
+    esp_mn_commands_add(16, "fan hui zhu ye"); // 返回主页
     esp_mn_commands_update(); // 更新命令词
     int mu_chunksize = multinet->get_samp_chunksize(model_data);  // 获取samp帧长度
     assert(mu_chunksize == afe_chunksize);
@@ -119,13 +128,39 @@ void detect_Task(void *arg)
                     case 5: // xia yi shou 下一首
                         ESP_LOGI(TAG,"下一首\n");
                         break;
-                    case 6: // sheng yin da yi dian 声音大一点
-                        ESP_LOGI(TAG,"声音大一点\n");
+                    case 6: // sheng yin xiao yi dian 声音小一点
+                        ESP_LOGI(TAG,"声音小一点\n");
                         break;
                     case 7: // sheng yin xiao yi dian 声音小一点
                         ESP_LOGI(TAG,"声音小一点\n");
                         break;
-
+                    case 8: //  打开摄像头
+                        ESP_LOGI(TAG,"打开摄像头\n");
+                        break;
+                    case 9: // 打开闹钟
+                        ESP_LOGI(TAG,"打开闹钟\n");
+                        break;
+                    case 10: // 打开文件夹
+                        ESP_LOGI(TAG,"打开文件夹\n");
+                        break;
+                    case 11: // 查看天气
+                        ESP_LOGI(TAG,"查看天气\n");
+                        break;
+                    case 12: // 打开wifi
+                        ESP_LOGI(TAG,"打开网络\n");
+                        break;
+                    case 13: // 打开蓝牙
+                        ESP_LOGI(TAG,"打开蓝牙\n");
+                        break;
+                    case 14: // 亮度暗一点
+                        ESP_LOGI(TAG,"亮度暗一点\n");
+                        break;
+                    case 15: // 亮度亮一点
+                        ESP_LOGI(TAG,"亮度亮一点\n");
+                        break;
+                    case 16: //  返回主页
+                        ESP_LOGI(TAG,"返回主页\n");
+                        break;
                     default:
                         break;
                 }

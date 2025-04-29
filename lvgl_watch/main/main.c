@@ -17,7 +17,7 @@
 #include "lvgl.h"
 #include "app_sr.h"
 //#include "lvgl_helpers.h"
- 
+ #include "get_weather.h"
 #include "gui_guider.h"
 #include "custom.h"
  
@@ -47,12 +47,13 @@ void app_main(void)
     app_wifi_init(WIFI_SSID, WIFI_PASS); // 初始化wifi
     save_wifi_info(WIFI_SSID,WIFI_PASS);
 
-    app_sr_init();  // 语音识别初始化 
 
     bsp_spiffs_init("ui_img","/img",5);
     sdcard_init();
+    bsp_codec_init(); // 音频初始化
+    app_sr_init();  // 语音识别初始化 
     setup_ui(&guider_ui);
-
+    get_weather_from_seniverse(); // 获取天气信息
 
 
     //ui_mjpeg_create();

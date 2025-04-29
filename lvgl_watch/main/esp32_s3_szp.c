@@ -708,6 +708,7 @@ esp_codec_dev_handle_t bsp_audio_codec_speaker_init(void)
     audio_codec_i2c_cfg_t i2c_cfg = {
         .port = BSP_I2C_NUM,
         .addr = ES8311_CODEC_DEFAULT_ADDR,
+        .bus_handle = bus_handle,
     };
     const audio_codec_ctrl_if_t *i2c_ctrl_if = audio_codec_new_i2c_ctrl(&i2c_cfg);
     assert(i2c_ctrl_if);
@@ -753,6 +754,7 @@ esp_codec_dev_handle_t bsp_audio_codec_microphone_init(void)
     audio_codec_i2c_cfg_t i2c_cfg = {
         .port = BSP_I2C_NUM,
         .addr = 0x82,
+        .bus_handle = bus_handle,
     };
     const audio_codec_ctrl_if_t *i2c_ctrl_if = audio_codec_new_i2c_ctrl(&i2c_cfg);
     assert(i2c_ctrl_if);

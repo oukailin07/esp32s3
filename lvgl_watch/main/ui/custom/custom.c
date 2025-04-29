@@ -42,6 +42,7 @@ lv_ui_top top;
 static lv_obj_t *control_center_panel;
 static lv_obj_t *slider;
 
+
 void brightness_slider_event_cb(lv_event_t *e)
 {
     lv_obj_t *slider = lv_event_get_target(e);
@@ -465,14 +466,16 @@ void add_slide_trigger(lv_obj_t *page) {
     lv_obj_set_style_text_font(top.screen_imgbtn_9, &lv_font_montserratMedium_12, LV_PART_MAIN|LV_STATE_CHECKED);
     lv_obj_set_style_text_opa(top.screen_imgbtn_9, 255, LV_PART_MAIN|LV_STATE_CHECKED);
     lv_obj_set_style_shadow_width(top.screen_imgbtn_9, 0, LV_PART_MAIN|LV_STATE_CHECKED);
-
+    
     //Write style for screen_imgbtn_9, Part: LV_PART_MAIN, State: LV_IMGBTN_STATE_RELEASED.
     lv_obj_set_style_img_recolor_opa(top.screen_imgbtn_9, 0, LV_PART_MAIN|LV_IMGBTN_STATE_RELEASED);
     lv_obj_set_style_img_opa(top.screen_imgbtn_9, 255, LV_PART_MAIN|LV_IMGBTN_STATE_RELEASED);
 
+    LV_FONT_DECLARE(myFont);					// 字体声明
     //Write codes screen_top_label_region
     top.screen_top_label_region = lv_label_create(top.top_state);
-    lv_label_set_text(top.screen_top_label_region, "ZheJiang");
+    lv_obj_set_style_text_font(top.screen_top_label_region, &myFont, LV_STATE_DEFAULT);
+    lv_label_set_text(top.screen_top_label_region, "金华市");
     lv_label_set_long_mode(top.screen_top_label_region, LV_LABEL_LONG_WRAP);
     lv_obj_set_pos(top.screen_top_label_region, 231, 25);
     lv_obj_set_size(top.screen_top_label_region, 78, 28);
@@ -814,7 +817,7 @@ void ai_gui_in(void)
 {   
     lvgl_port_lock(0);
     gif_start = lv_gif_create(lv_scr_act());
-    lv_gif_set_src(gif_start, "img/disdain.gif");
+    lv_gif_set_src(gif_start, "/img/disdain.gif");
     lv_obj_align(gif_start, LV_ALIGN_CENTER, 0, 0);
     lvgl_port_unlock();
 }
