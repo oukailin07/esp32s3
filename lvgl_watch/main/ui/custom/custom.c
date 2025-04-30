@@ -471,11 +471,11 @@ void add_slide_trigger(lv_obj_t *page) {
     lv_obj_set_style_img_recolor_opa(top.screen_imgbtn_9, 0, LV_PART_MAIN|LV_IMGBTN_STATE_RELEASED);
     lv_obj_set_style_img_opa(top.screen_imgbtn_9, 255, LV_PART_MAIN|LV_IMGBTN_STATE_RELEASED);
 
-    LV_FONT_DECLARE(myFont);					// 字体声明
+    LV_FONT_DECLARE(my_Font_20);	
     //Write codes screen_top_label_region
     top.screen_top_label_region = lv_label_create(top.top_state);
-    lv_obj_set_style_text_font(top.screen_top_label_region, &myFont, LV_STATE_DEFAULT);
     lv_label_set_text(top.screen_top_label_region, "金华市");
+    lv_obj_set_style_text_font(top.screen_top_label_region, &my_Font_20, LV_STATE_DEFAULT);
     lv_label_set_long_mode(top.screen_top_label_region, LV_LABEL_LONG_WRAP);
     lv_obj_set_pos(top.screen_top_label_region, 231, 25);
     lv_obj_set_size(top.screen_top_label_region, 78, 28);
@@ -484,7 +484,7 @@ void add_slide_trigger(lv_obj_t *page) {
     lv_obj_set_style_border_width(top.screen_top_label_region, 0, LV_PART_MAIN|LV_STATE_DEFAULT);
     lv_obj_set_style_radius(top.screen_top_label_region, 0, LV_PART_MAIN|LV_STATE_DEFAULT);
     lv_obj_set_style_text_color(top.screen_top_label_region, lv_color_hex(0xffffff), LV_PART_MAIN|LV_STATE_DEFAULT);
-    lv_obj_set_style_text_font(top.screen_top_label_region, &lv_font_ArchitectsDaughter_20, LV_PART_MAIN|LV_STATE_DEFAULT);
+    //lv_obj_set_style_text_font(top.screen_top_label_region, &lv_font_ArchitectsDaughter_20, LV_PART_MAIN|LV_STATE_DEFAULT);
     lv_obj_set_style_text_opa(top.screen_top_label_region, 255, LV_PART_MAIN|LV_STATE_DEFAULT);
     lv_obj_set_style_text_letter_space(top.screen_top_label_region, 0, LV_PART_MAIN|LV_STATE_DEFAULT);
     lv_obj_set_style_text_line_space(top.screen_top_label_region, 0, LV_PART_MAIN|LV_STATE_DEFAULT);
@@ -507,7 +507,7 @@ void add_slide_trigger(lv_obj_t *page) {
     lv_obj_set_style_border_width(top.screen_top_label_temperature, 0, LV_PART_MAIN|LV_STATE_DEFAULT);
     lv_obj_set_style_radius(top.screen_top_label_temperature, 0, LV_PART_MAIN|LV_STATE_DEFAULT);
     lv_obj_set_style_text_color(top.screen_top_label_temperature, lv_color_hex(0xffffff), LV_PART_MAIN|LV_STATE_DEFAULT);
-    lv_obj_set_style_text_font(top.screen_top_label_temperature, &lv_font_montserratMedium_20, LV_PART_MAIN|LV_STATE_DEFAULT);
+    lv_obj_set_style_text_font(top.screen_top_label_temperature, &my_Font_20, LV_PART_MAIN|LV_STATE_DEFAULT);
     lv_obj_set_style_text_opa(top.screen_top_label_temperature, 255, LV_PART_MAIN|LV_STATE_DEFAULT);
     lv_obj_set_style_text_letter_space(top.screen_top_label_temperature, 0, LV_PART_MAIN|LV_STATE_DEFAULT);
     lv_obj_set_style_text_line_space(top.screen_top_label_temperature, 0, LV_PART_MAIN|LV_STATE_DEFAULT);

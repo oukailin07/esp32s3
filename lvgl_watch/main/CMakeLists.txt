@@ -10,7 +10,7 @@ file(GLOB_RECURSE srcs *.c
                     wifi/src/*.c
                     esp-sr/*.c
                     http/*.c
-                    myFonts/*.c
+                    myFont/*.c
                     )
  
 set(include_dirs 

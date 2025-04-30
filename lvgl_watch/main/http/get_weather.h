@@ -41,8 +41,32 @@ typedef struct {
 } user_seniverse_config_t;
 
 
+typedef struct {
+    char city[32];
+    char text[32];
+    char temperature[8];
+    char last_update[32];
+} WeatherNow;
+
+#define MAX_HOURLY_FORECAST 24
+
+typedef struct {
+    char time[32];
+    char text[32];
+    char temperature[8];
+} WeatherHourly;
+
+typedef struct {
+    WeatherHourly hourly[MAX_HOURLY_FORECAST];
+    int count;
+} Weather24H;
+
 void http_rest_with_url(void);
 bool parse_seniverse_weather(const char *json_str, user_seniverse_config_t *out_config);
 void free_seniverse_config(user_seniverse_config_t *cfg);
 void print_weather_details(user_seniverse_config_t *weather_data);
+void http_get_weather_24h(void);
+void http_get_weather_now(void);
+bool parse_seniverse_weather_now(const char *json, WeatherNow *weather);
+bool parse_seniverse_weather_24h(const char *json, Weather24H *weather);
 #endif

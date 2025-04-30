@@ -54,8 +54,8 @@ void app_main(void)
     app_sr_init();  // 语音识别初始化 
     setup_ui(&guider_ui);
     http_rest_with_url(); // 获取天气信息
-
-
+    http_get_weather_now();
+    //http_get_weather_24h();
     //ui_mjpeg_create();
     //tcp_file_start();
 
