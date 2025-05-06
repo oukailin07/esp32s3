@@ -13,7 +13,7 @@
 
 #include "esp32_s3_szp.h"
 #define TAG "FFT_VIS"
-#define FFT_SIZE        1024
+#define FFT_SIZE        128
 QueueHandle_t fft_result_queue;
 
 // 采样缓冲区
@@ -37,7 +37,7 @@ static lv_color_t *canvas_buf;
 #define FFT_CANVAS_HEIGHT   FFT_BAR_HEIGHT
 
 int peak_heights[FFT_BAR_NUM] = {0};  // 每个柱子的顶部白块高度
-const int peak_fall_speed = 2;        // 白块每帧下降速度（像素）
+const int peak_fall_speed = 8;        // 白块每帧下降速度（像素）
 
 #define BLOCK_NUM 20           // 每列分为多少小块
 #define BLOCK_SPACING 0        // 块之间的间距
@@ -191,14 +191,12 @@ void lvgl_fft_canvas_update(float *fft_data)
 
 
 
+#define SMOOTHING_FACTOR 0.02f
+#define MAX_FFT_INPUT_VALUE 10000.0f  // 根据需求调整最大输入值
 
 
-
-// FFT 读取麦克风数据
 void fft_task(void *arg)
 {
-
-    // 检查输入输出缓存是否为空
     if (!i2s_read_buff || !fft_input || !fft_output) {
         ESP_LOGE(TAG, "FFT buffers not initialized!");
         vTaskDelete(NULL);
@@ -206,39 +204,59 @@ void fft_task(void *arg)
     }
 
     while (1) {
-        // 读取 I2S 音频数据
-        int buffer_len = sizeof(int16_t) * 2 * FFT_SIZE;
+        // 每个样本包含 4 通道，每通道 16bit（int16_t）
+        int buffer_len = sizeof(int16_t) * 4 * FFT_SIZE;
         esp_codec_dev_read(record_dev_handle, (void *)i2s_read_buff, buffer_len);
 
-        // 转换为 float 格式，填充复数数组（左声道）
+        // 合并 4 个通道音频为一个通道进行 FFT
         for (int i = 0; i < FFT_SIZE; i++) {
-            int16_t sample = i2s_read_buff[i * 2];  // 假设左声道采样在前
-            fft_input[2 * i] = (float)sample;       // 实部
-            fft_input[2 * i + 1] = 0.0f;            // 虚部
+            int16_t ch0 = i2s_read_buff[i * 4 + 0];
+            int16_t ch1 = i2s_read_buff[i * 4 + 1];
+
+            // 简单平均混音
+            int16_t mixed = (ch0 + ch1) / 2;
+
+            // 对 FFT 输入数据进行限制，防止异常值
+            fft_input[2 * i] = fmaxf(fminf((float)mixed, MAX_FFT_INPUT_VALUE), -MAX_FFT_INPUT_VALUE);  // 实部
+            fft_input[2 * i + 1] = 0.0f; // 虚部初始化为 0
         }
 
-        // 执行 FFT（复数快速傅里叶变换）
+        // 执行 FFT
         dsps_fft2r_fc32(fft_input, FFT_SIZE);
         dsps_bit_rev_fc32(fft_input, FFT_SIZE);
 
-        // 计算复数幅度谱
+        // 计算幅值并进行平滑处理
         for (int i = 0; i < FFT_SIZE / 2; i++) {
             float real = fft_input[2 * i];
             float imag = fft_input[2 * i + 1];
-            fft_output[i] = sqrtf(real * real + imag * imag);
+            float magnitude = sqrtf(real * real + imag * imag);
+
+            // 如果幅值为 NaN 或负数，跳过这个值
+            if (isnan(magnitude) || magnitude < 0.0f) {
+                magnitude = 0.0f;
+            }
+
+            // 平滑处理
+            fft_output[i] = (1 - SMOOTHING_FACTOR) * fft_output[i] + SMOOTHING_FACTOR * magnitude - 5.0f;
+
+            // 检查输出是否有效，如果是 NaN 则设为默认值 0
+            if (isnan(fft_output[i])) {
+                ESP_LOGW(TAG, "Warning: FFT output[%d] is NaN", i);
+                fft_output[i] = 0.0f; // 将 NaN 设置为 0 或其他默认值
+            }
+
+            //ESP_LOGI(TAG, "FFT output[%d]: %f", i, fft_output[i]);
         }
 
-        // 发送数据到队列
+        // 拷贝结果并通过队列传递
         float fft_result[FFT_SIZE / 2];
         memcpy(fft_result, fft_output, sizeof(fft_result));
-        // if (xQueueSend(fft_result_queue, fft_result, 0) != pdPASS) {
-        //     ESP_LOGW(TAG, "Queue full, dropping FFT data");
-        // }
         xQueueOverwrite(fft_result_queue, fft_result);
-        // 降低延迟
-        vTaskDelay(10); // 通过减小延迟时间来提升实时性
+
+        vTaskDelay(1); // 可调节刷新频率
     }
 }
+
 
 
 
@@ -272,9 +290,13 @@ void app_main(void)
     bsp_codec_init();
     dsps_fft2r_init_fc32(NULL, CONFIG_DSP_MAX_FFT_SIZE);
     //lvgl_fft_ui_init();
-    fft_input = (float *)heap_caps_malloc(sizeof(float) * 2 * FFT_SIZE, MALLOC_CAP_32BIT | MALLOC_CAP_INTERNAL);
-    fft_output = (float *)heap_caps_malloc(sizeof(float) * FFT_SIZE, MALLOC_CAP_32BIT | MALLOC_CAP_INTERNAL);  // 如果用来放幅度
-    i2s_read_buff = (int16_t *)heap_caps_malloc(sizeof(int16_t) * 2 * FFT_SIZE, MALLOC_CAP_32BIT | MALLOC_CAP_INTERNAL);
+    // fft_input = (float *)heap_caps_malloc(sizeof(float) * 2 * FFT_SIZE, MALLOC_CAP_32BIT | MALLOC_CAP_INTERNAL);
+    // fft_output = (float *)heap_caps_malloc(sizeof(float) * FFT_SIZE / 2, MALLOC_CAP_32BIT | MALLOC_CAP_INTERNAL);  // 如果用来放幅度
+    fft_input = (float *)heap_caps_aligned_alloc(16, sizeof(float) * 2 * FFT_SIZE, MALLOC_CAP_32BIT | MALLOC_CAP_INTERNAL);
+    fft_output = (float *)heap_caps_aligned_alloc(16, sizeof(float) * FFT_SIZE / 2, MALLOC_CAP_32BIT | MALLOC_CAP_INTERNAL);
+    ESP_LOGE(TAG, "fft_input addr = %p", fft_input);
+    ESP_LOGE(TAG, "fft_output addr = %p", fft_output);
+    i2s_read_buff = (int16_t *)heap_caps_malloc(sizeof(int16_t) * 4 * FFT_SIZE, MALLOC_CAP_32BIT | MALLOC_CAP_INTERNAL);
     fft_result_queue = xQueueCreate(1, sizeof(float) * FFT_SIZE / 2);
     assert(fft_result_queue != NULL);
     assert(fft_input != NULL);
