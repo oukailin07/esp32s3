@@ -99,44 +99,53 @@ void lvgl_fft_canvas_update(float *fft_data)
 
     int bar_width = FFT_BAR_WIDTH - 2;
     int block_h = FFT_CANVAS_HEIGHT / BLOCK_NUM;
-    int color_group_size = 8;  // 每种基准色调的柱子数量
+    int color_group_size = 8;  // 每种颜色基准的柱子数量
 
-    // 基准色调：红、橙、黄、绿、青、蓝、紫、粉（HSV色相角度大致）
-    uint16_t base_hues[] = {0, 60, 120, 180, 210, 270, 330, 0}; // 红色、黄色、绿色、青色、蓝色、紫色、粉色等
+    // 八种颜色基准，每组从浅到深
+    struct {
+        uint8_t r_start, g_start, b_start;  // 浅色（底部）
+        uint8_t r_end, g_end, b_end;        // 深色（顶部）
+    } color_gradients[8] = {
+        {255,150,150, 255,0,0},     // 红
+        {255,177,0, 255,240,200},   // 橙
+        {255,255,0, 255,255,200},   // 黄
+        {200,255,200, 0,255,0},     // 绿
+        {100,255,255, 0,255,255},   // 青
+        {96,145,255, 0,78,255},     // 蓝
+        {255,100,255, 255,0,255},   // 紫
+        {255,200,255, 255,105,180}  // 粉
+    };
 
     for (int i = 0; i < FFT_BAR_NUM; i++) {
         int bin = i * (FFT_SIZE / 2) / FFT_BAR_NUM;
         float value = fft_data[bin];
 
-        // 限幅
-        if (value > 100.0f) value = 100.0f;
-        if (value < 0.0f) value = 0.0f;
+        value = fminf(fmaxf(value, 0.0f), 100.0f);  // 限幅到 0~100
 
-        // 计算柱子高度与块数
         int bar_h = (int)(value * FFT_CANVAS_HEIGHT / 100.0f);
         int blocks_to_draw = bar_h / block_h;
-
-        // 获取该柱子的色调索引（每 color_group_size 个柱子为一个色调）
-        int color_index = i / color_group_size;
-        if (color_index >= sizeof(base_hues)/sizeof(base_hues[0])) {
-            color_index = sizeof(base_hues)/sizeof(base_hues[0]) - 1;
-        }
-
-        int base_hue = base_hues[color_index];
         int bar_x = i * FFT_BAR_WIDTH;
+
+        int color_index = i / color_group_size;
+        if (color_index >= 8) color_index = 7;
+
+        uint8_t r_start = color_gradients[color_index].r_start;
+        uint8_t g_start = color_gradients[color_index].g_start;
+        uint8_t b_start = color_gradients[color_index].b_start;
+        uint8_t r_end = color_gradients[color_index].r_end;
+        uint8_t g_end = color_gradients[color_index].g_end;
+        uint8_t b_end = color_gradients[color_index].b_end;
 
         for (int j = 0; j < blocks_to_draw; j++) {
             int block_y = FFT_CANVAS_HEIGHT - (j + 1) * block_h + BLOCK_SPACING / 2;
 
-            // 渐变：上方块颜色更深，下方更亮
-            uint8_t sat = 200;  // 饱和度固定为 200，确保颜色不变灰
-            uint8_t val = 255 - (j * 155 / BLOCK_NUM);  // 渐变值：255 ~ 100，表示上方块颜色更深，下方更亮
-            if (val < 100) val = 100;
+            // 从底部（浅）到顶部（深）渐变
+            uint8_t r = r_end - (r_end - r_start) * j / blocks_to_draw;
+            uint8_t g = g_end - (g_end - g_start) * j / blocks_to_draw;
+            uint8_t b = b_end - (b_end - b_start) * j / blocks_to_draw;
 
-            // 保持色相为基准色调，饱和度为固定值，亮度根据块的高度变化
-            lv_color_t block_color = hsv_to_rgb(base_hue, sat, val);
+            lv_color_t block_color = lv_color_make(r, g, b);
 
-            // 主色块
             lv_draw_rect_dsc_t block_dsc;
             lv_draw_rect_dsc_init(&block_dsc);
             block_dsc.bg_color = block_color;
@@ -149,35 +158,20 @@ void lvgl_fft_canvas_update(float *fft_data)
                                 bar_width,
                                 block_h - BLOCK_SPACING,
                                 &block_dsc);
-
-            // 发光边缘（可选）
-            lv_draw_rect_dsc_t glow_dsc;
-            lv_draw_rect_dsc_init(&glow_dsc);
-            glow_dsc.bg_color = lv_color_white();
-            glow_dsc.bg_opa = LV_OPA_20;
-            glow_dsc.radius = BLOCK_RADIUS;
-
-            lv_canvas_draw_rect(canvas,
-                                bar_x - 1,
-                                block_y - 1,
-                                bar_width + 2,
-                                block_h - BLOCK_SPACING + 2,
-                                &glow_dsc);
         }
 
-        // 峰值白块逻辑
+        // 白色峰值块
         int current_peak_y = FFT_CANVAS_HEIGHT - bar_h;
 
         if (peak_y[i] == 0 || current_peak_y < peak_y[i]) {
             peak_y[i] = current_peak_y;
         } else {
-            peak_y[i] += 2;
+            peak_y[i] += peak_fall_speed;
             if (peak_y[i] > FFT_CANVAS_HEIGHT - block_h) {
                 peak_y[i] = FFT_CANVAS_HEIGHT - block_h;
             }
         }
 
-        // 绘制顶部白色小块
         lv_draw_rect_dsc_t peak_dsc;
         lv_draw_rect_dsc_init(&peak_dsc);
         peak_dsc.bg_color = lv_color_white();
@@ -192,6 +186,9 @@ void lvgl_fft_canvas_update(float *fft_data)
                             &peak_dsc);
     }
 }
+
+
+
 
 
 
