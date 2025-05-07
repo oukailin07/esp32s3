@@ -92,12 +92,30 @@ void lvgl_fft_canvas_init()
 }
 
 
-void lvgl_fft_canvas_update(float *fft_avg)
-{
+static uint32_t last_color_switch_time = 0;   // 记录上次颜色切换时间
+static int color_cycle_direction = 1;          // 颜色循环方向：1 为正向，-1 为反向
+static float hue_offset = 0.0f;                // 颜色循环偏移量
+
+void lvgl_fft_canvas_update(float *fft_avg) {
     lv_canvas_fill_bg(canvas, lv_color_black(), LV_OPA_COVER);  // 清屏
 
     int bar_width = FFT_BAR_WIDTH - 2;
     int block_h = FFT_CANVAS_HEIGHT / BLOCK_NUM;
+
+    uint32_t current_time = lv_tick_get();
+    
+    // 每两秒切换一次颜色
+    if (current_time - last_color_switch_time >= 50) {
+        last_color_switch_time = current_time;
+        hue_offset += color_cycle_direction * 3.0f;  // 每次偏移
+        
+        // 控制偏移范围
+        if (hue_offset > 360.0f) {
+            hue_offset = 0.0f;
+        } else if (hue_offset < 0.0f) {
+            hue_offset = 360.0f;
+        }
+    }
 
     for (int i = 0; i < FFT_BAR_NUM; i++) {
         //float value = 100.0f;  // 模拟默认值
@@ -108,11 +126,13 @@ void lvgl_fft_canvas_update(float *fft_avg)
         int blocks_to_draw = bar_h / block_h;
         int bar_x = i * FFT_BAR_WIDTH;
 
-        // 从左到右的 hue 值（0~360）
-        float hue = ((float)i / FFT_BAR_NUM) * 360.0f;
+        // 从左到右的 hue 值（加上动态偏移）
+        float hue = ((float)i / FFT_BAR_NUM) * 360.0f + hue_offset;
+        if (hue > 360.0f) {
+            hue -= 360.0f;
+        }
 
         int denom = blocks_to_draw > 0 ? blocks_to_draw : 1;
-
         for (int j = 0; j < blocks_to_draw; j++) {
             int block_y = FFT_CANVAS_HEIGHT - (j + 1) * block_h + BLOCK_SPACING / 2;
 
@@ -149,7 +169,19 @@ void lvgl_fft_canvas_update(float *fft_avg)
 
         lv_draw_rect_dsc_t peak_dsc;
         lv_draw_rect_dsc_init(&peak_dsc);
-        peak_dsc.bg_color = lv_color_white();
+
+        // === 关键修改点 ===
+        if (bar_h < block_h) {
+            // 音量太低，柱子高度小于一个 block，使用渐变色代替白色
+            float value_brightness = 1.0f;
+            uint8_t r, g, b;
+            hsv_to_rgb(hue, 1.0f, value_brightness, &r, &g, &b);
+            peak_dsc.bg_color = lv_color_make(r, g, b);
+        } else {
+            // 音量正常，使用白色峰值块
+            peak_dsc.bg_color = lv_color_white();
+        }
+        // ===================
         peak_dsc.bg_opa = LV_OPA_COVER;
         peak_dsc.radius = BLOCK_RADIUS;
 
@@ -162,9 +194,7 @@ void lvgl_fft_canvas_update(float *fft_avg)
     }
 }
 
-
-
-#define SMOOTHING_FACTOR 0.9f
+#define SMOOTHING_FACTOR 1.0f
 #define MAX_FFT_INPUT_VALUE 32767.0f
 
 // 音频采集与 FFT 分析任务
@@ -268,7 +298,7 @@ void lvgl_update_task(void *arg)
                 lvgl_port_unlock();   // 解锁
             }
         }
-        vTaskDelay(5);  // 控制刷新速率
+        vTaskDelay(1);  // 控制刷新速率
     }
 
     
