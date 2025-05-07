@@ -326,18 +326,122 @@ void fft_task_mp3(void *arg)
     }
 }
 
+void fft_task_pcm(void *arg)
+{
+    // 检查 FFT 输入缓冲区是否初始化
+    if (!i2s_read_buff) {
+        ESP_LOGE(TAG, "FFT buffers not initialized!");
+        vTaskDelete(NULL);
+        return;
+    }
+
+    // 打开 PCM 文件（只打开一次）
+    static FILE *pcm_file = NULL;
+    if (!pcm_file) {
+        pcm_file = fopen("/spiffs/test.pcm", "rb");
+        if (!pcm_file) {
+            ESP_LOGE(TAG, "Failed to open /spiffs/test.pcm");
+            vTaskDelete(NULL);
+            return;
+        }
+    }
+
+    const int group_size = (FFT_SIZE / 2) / FFT_BAR_NUM;
+    float fft_result[FFT_BAR_NUM];
+
+    while (1) {
+        // 单声道，每个采样点 2 字节，总共 FFT_SIZE 个点
+        int buffer_len = sizeof(int16_t) * FFT_SIZE;
+
+        // 从文件中读取音频数据
+        int read_bytes = fread(i2s_read_buff, 1, buffer_len, pcm_file);
+
+        // 如果读取的数据小于期望大小，检查是否是文件结尾或发生了错误
+        if (read_bytes < buffer_len) {
+            if (read_bytes == 0) {
+                // 文件已读取完毕，重新设置文件指针到开头
+                ESP_LOGW(TAG, "Reached end of PCM file. Restarting from the beginning...");
+                fseek(pcm_file, 0, SEEK_SET);  // 循环播放
+            } else {
+                // 发生读取错误
+                ESP_LOGW(TAG, "Read error, retrying...");
+                // 可选择延时，避免过快重复读取错误
+                vTaskDelay(100 / portTICK_PERIOD_MS);
+            }
+        } else {
+            // 成功读取了期望大小的数据，继续处理
+            //ESP_LOGI(TAG, "Read PCM data successfully.");
+        }
+    
+        // 处理数据：转换为 float，准备 FFT 输入（实部+虚部）
+        int16_t *samples = (int16_t *)i2s_read_buff;
+        for (int i = 0; i < FFT_SIZE; i++) {
+            float sample = (float)samples[i];
+            fft_input[2 * i] = fmaxf(fminf(sample, MAX_FFT_INPUT_VALUE), -MAX_FFT_INPUT_VALUE); // 实部
+            fft_input[2 * i + 1] = 0.0f; // 虚部设为 0
+        }
+
+        // 进行 FFT 计算（实数输入，复数输出）
+        dsps_fft2r_fc32(fft_input, FFT_SIZE);
+
+        // 位反转（必要的 FFT 后处理步骤）
+        dsps_bit_rev_fc32(fft_input, FFT_SIZE);
+
+        // 计算频谱幅值并进行归一化和平滑处理
+        for (int i = 0; i < FFT_SIZE / 2; i++) {
+            float real = fft_input[2 * i];     // 实部
+            float imag = fft_input[2 * i + 1]; // 虚部
+            float mag = sqrtf(real * real + imag * imag);  // 幅值计算
+            mag = isnan(mag) || mag < 0.0f ? 0.0f : mag;    // 处理异常值
+
+            // 归一化到 0~100 范围
+            float norm_mag = fminf(fmaxf(mag / MAX_FFT_INPUT_VALUE * 100.0f, 0.0f), 100.0f);
+
+            // 使用滑动平均滤波实现频谱平滑效果
+            fft_output[i] = (1 - SMOOTHING_FACTOR) * fft_output[i] + SMOOTHING_FACTOR * norm_mag;
+
+            if (isnan(fft_output[i])) {
+                fft_output[i] = 0.0f;  // 处理 NaN
+            }
+        }
+
+        // 对每个频谱柱求平均幅值（频段分组）
+        for (int i = 0; i < FFT_BAR_NUM; i++) {
+            float sum = 0;
+            for (int j = 0; j < group_size; j++) {
+                sum += fft_output[i * group_size + j];  // 同一频段内累加
+            }
+            fft_result[i] = sum / group_size;  // 取平均值
+
+            if (!isfinite(fft_result[i])) {
+                fft_result[i] = 0.0f;  // 防止出现无穷大
+            }
+
+            // 可用于调试查看每个频段的幅值
+            // ESP_LOGI(TAG, "fft_result[%d] = %f", i, fft_result[i]);
+        }
+
+        // 将频谱结果发送到消息队列中（覆盖旧数据）
+        xQueueOverwrite(fft_result_queue, fft_result);
+
+        // 小延时，释放 CPU 给其他任务使用
+        vTaskDelay(10);
+    }
+}
 
 
 void lvgl_update_task(void *arg)
 {
 
-    float recv_fft[FFT_SIZE / 2];
+    float recv_fft[FFT_BAR_NUM];
 
     while (1) {
         if (xQueueReceive(fft_result_queue, recv_fft, portMAX_DELAY)) {
             if (lvgl_port_lock(0)) {  // 加锁
                 lvgl_fft_canvas_update(recv_fft);
                 lvgl_port_unlock();   // 解锁
+            } else {
+                ESP_LOGW(TAG, "Failed to receive FFT result from queue.");
             }
         }
         vTaskDelay(1);  // 控制刷新速率
@@ -356,17 +460,18 @@ void app_main(void)
 
     fft_data_ready = xSemaphoreCreateBinary();
     i2s_read_buff = (int16_t *)heap_caps_malloc(sizeof(int16_t) * 4 * FFT_SIZE, MALLOC_CAP_8BIT | MALLOC_CAP_INTERNAL);
-    fft_result_queue = xQueueCreate(1, sizeof(float) * FFT_SIZE / 2);
+    fft_result_queue = xQueueCreate(1, sizeof(float) * FFT_BAR_NUM);
     fft_result_queue_mp3 = xQueueCreate(1, sizeof(float) * FFT_SIZE);
     assert(fft_result_queue != NULL);
     assert(fft_input != NULL);
     assert(fft_output != NULL);
     assert(i2s_read_buff != NULL);
     lvgl_fft_canvas_init();
-    mp3_player_init();
+    //mp3_player_init();
 
     xTaskCreatePinnedToCore(lvgl_update_task, "lvgl_update_task", 4096 * 2, NULL, 1, NULL, 1);
-    xTaskCreatePinnedToCore(fft_task, "fft_lvgl", 4096 * 2, NULL, 5, NULL,0);
+    //xTaskCreatePinnedToCore(fft_task, "fft_lvgl", 4096 * 2, NULL, 5, NULL,0);
+    xTaskCreatePinnedToCore(fft_task_pcm, "fft_lvgl_pcm", 4096 * 2, NULL, 5, NULL,0);
     //xTaskCreatePinnedToCore(fft_task_mp3, "fft_task_mp3", 4096 * 2, NULL, 5, NULL,0);
     
 }
