@@ -14,11 +14,18 @@
 #include "app_ui.h"
 #include "esp32_s3_szp.h"
 #define TAG "FFT_VIS"
-float fft_table[CONFIG_DSP_MAX_FFT_SIZE];
-#define FFT_SIZE        1024
-QueueHandle_t fft_result_queue;
-QueueHandle_t fft_result_queue_mp3;
-int16_t *fft_pcm_buffer ;
+
+
+#define FFT_SIZE 1024
+#define SAMPLE_RATE 16000
+#define NUM_BARS 15
+#define MAX_FFT_INPUT_VALUE 32767.0f
+#define SMOOTHING_FACTOR 1.0f
+
+extern int16_t *i2s_read_buff;
+extern esp_codec_dev_handle_t record_dev_handle;
+extern void hsv_to_rgb(float h, float s, float v, uint8_t *r, uint8_t *g, uint8_t *b);
+
 // 采样缓冲区
 int16_t *i2s_read_buff; // 16-bit stereo, 2倍空间
 __attribute__((aligned(16)))
@@ -26,28 +33,64 @@ float fft_input[2 * FFT_SIZE];       // interleaved real/imag
 __attribute__((aligned(16)))
 float fft_output[FFT_SIZE/2];          // magnitude
 
-extern esp_codec_dev_handle_t record_dev_handle;
-extern i2s_chan_handle_t i2s_rx_chan;
-
-#define NUM_BARS 64
 lv_obj_t *bars[NUM_BARS];
+static float fft_result[NUM_BARS] = {0};
+static int peak_y[NUM_BARS] = {0};
+static float hue_offset = 0.0f;
+static uint32_t last_color_switch_time = 0;
+
+typedef struct {
+    int bin_start;
+    int bin_end;
+} fft_band_t;
+
+// Bin范围对应频段（对数分布）
+const fft_band_t fft_15bands[NUM_BARS] = {
+    {1, 2}, {3, 4}, {5, 7}, {8, 11}, {12, 16},
+    {17, 23}, {24, 32}, {33, 44}, {45, 60}, {61, 81},
+    {82, 108}, {109, 144}, {145, 191}, {192, 252}, {253, 511}
+};
+
+static const fft_band_t fft_15bands_48k[NUM_BARS] = {
+    {1, 1},    // ≈ 20.0 ~ 31.4 Hz
+    {2, 2},    // ≈ 31.4 ~ 49.3 Hz
+    {3, 4},    // ≈ 49.3 ~ 77.3 Hz
+    {5, 6},    // ≈ 77.3 ~ 121.1 Hz
+    {7, 10},   // ≈ 121.1 ~ 189.7 Hz
+    {11, 15},  // ≈ 189.7 ~ 297.0 Hz
+    {16, 23},  // ≈ 297.0 ~ 464.6 Hz
+    {24, 35},  // ≈ 464.6 ~ 726.6 Hz
+    {36, 53},  // ≈ 726.6 ~ 1136.0 Hz
+    {54, 79},  // ≈ 1136.0 ~ 1777.5 Hz
+    {80, 118}, // ≈ 1777.5 ~ 2781.4 Hz
+    {119, 176},// ≈ 2781.4 ~ 4354.3 Hz
+    {177, 260},// ≈ 4354.3 ~ 6817.0 Hz
+    {261, 383},// ≈ 6817.0 ~ 10672.0 Hz
+    {384, 511} // ≈ 10672.0 ~ 24000.0 Hz
+};
+
+float fft_table[CONFIG_DSP_MAX_FFT_SIZE];
+#define FFT_SIZE        1024
+QueueHandle_t fft_result_queue;
+QueueHandle_t fft_result_queue_mp3;
+int16_t *fft_pcm_buffer ;
+
 
 
 static lv_obj_t *canvas;
 static lv_color_t *canvas_buf;
-#define FFT_BAR_NUM         64
-#define FFT_BAR_WIDTH       5
+#define FFT_BAR_NUM         15
+#define FFT_BAR_WIDTH       20
 #define FFT_BAR_HEIGHT      100
 #define FFT_CANVAS_WIDTH    (FFT_BAR_NUM * FFT_BAR_WIDTH)
 #define FFT_CANVAS_HEIGHT   FFT_BAR_HEIGHT
 
 int peak_heights[FFT_BAR_NUM] = {0};  // 每个柱子的顶部白块高度
-const int peak_fall_speed = 8;        // 白块每帧下降速度（像素）
+const int peak_fall_speed = 4;        // 白块每帧下降速度（像素）
 
-#define BLOCK_NUM 20           // 每列分为多少小块
+#define BLOCK_NUM 25           // 每列分为多少小块
 #define BLOCK_SPACING 0        // 块之间的间距
 #define BLOCK_RADIUS 0         // 圆角半径
-static int peak_y[FFT_BAR_NUM] = {0};  // 存储每一列白色小块的位置
 void hsv_to_rgb(float h, float s, float v, uint8_t *r, uint8_t *g, uint8_t *b)
 {
     float c = v * s;
@@ -94,9 +137,7 @@ void lvgl_fft_canvas_init()
 }
 
 
-static uint32_t last_color_switch_time = 0;   // 记录上次颜色切换时间
 static int color_cycle_direction = 1;          // 颜色循环方向：1 为正向，-1 为反向
-static float hue_offset = 0.0f;                // 颜色循环偏移量
 
 void lvgl_fft_canvas_update(float *fft_avg) {
     lv_canvas_fill_bg(canvas, lv_color_black(), LV_OPA_COVER);  // 清屏
@@ -208,16 +249,10 @@ void fft_task(void *arg)
         vTaskDelete(NULL);  // 删除当前任务
         return;
     }
-
-    // 每个频谱柱表示的频段宽度（FFT 输出中前半部分用于分析）
-    const int group_size = (FFT_SIZE / 2) / FFT_BAR_NUM;
-
-    // 用于存储最终每个频谱柱的平均幅值
-    float fft_result[FFT_BAR_NUM];
-
+    // 计算读取缓冲区长度（4 通道，每个通道 16 位，FFT_SIZE 个采样点）
+    int buffer_len = sizeof(int16_t) * 4 * FFT_SIZE;
     while (1) {
-        // 计算读取缓冲区长度（4 通道，每个通道 16 位，FFT_SIZE 个采样点）
-        int buffer_len = sizeof(int16_t) * 4 * FFT_SIZE;
+
 
         // 从 I2S 接口读取音频数据
         esp_codec_dev_read(record_dev_handle, (void *)i2s_read_buff, buffer_len);
@@ -259,20 +294,14 @@ void fft_task(void *arg)
             }
         }
 
-        // 对每个频谱柱求平均幅值（频段分组）
-        for (int i = 0; i < FFT_BAR_NUM; i++) {
+        for (int i = 0; i < NUM_BARS; i++) {
             float sum = 0;
-            for (int j = 0; j < group_size; j++) {
-                sum += fft_output[i * group_size + j];  // 同一频段内累加
+            int count = 0;
+            for (int j = fft_15bands_48k[i].bin_start; j <= fft_15bands_48k[i].bin_end; j++) {
+                sum += fft_output[j];
+                count++;
             }
-            fft_result[i] = sum / group_size;  // 取平均值
-
-            if (!isfinite(fft_result[i])) {
-                fft_result[i] = 0.0f;  // 防止出现无穷大
-            }
-
-            // 可用于调试查看每个频段的幅值
-            // ESP_LOGI(TAG, "fft_result[%d] = %f", i, fft_result[i]);
+            fft_result[i] = (count > 0) ? (sum / count) : 0.0f;
         }
 
         // 将频谱结果发送到消息队列中（覆盖旧数据）
@@ -313,12 +342,14 @@ void fft_task_mp3(void *arg)
                 //ESP_LOGI(TAG, "fft_output[%d] = %f", i, fft_output[i]);
             }
 
-            for (int i = 0; i < FFT_BAR_NUM; i++) {
+            for (int i = 0; i < NUM_BARS; i++) {
                 float sum = 0;
-                for (int j = 0; j < group_size; j++) {
-                    sum += fft_output[i * group_size + j];
+                int count = 0;
+                for (int j = fft_15bands_48k[i].bin_start; j <= fft_15bands_48k[i].bin_end; j++) {
+                    sum += fft_output[j];
+                    count++;
                 }
-                fft_result[i] = sum / group_size;
+                fft_result[i] = (count > 0) ? (sum / count) : 0.0f;
             }
 
             xQueueOverwrite(fft_result_queue, fft_result);
@@ -405,20 +436,14 @@ void fft_task_pcm(void *arg)
             }
         }
 
-        // 对每个频谱柱求平均幅值（频段分组）
-        for (int i = 0; i < FFT_BAR_NUM; i++) {
+        for (int i = 0; i < NUM_BARS; i++) {
             float sum = 0;
-            for (int j = 0; j < group_size; j++) {
-                sum += fft_output[i * group_size + j];  // 同一频段内累加
+            int count = 0;
+            for (int j = fft_15bands_48k[i].bin_start; j <= fft_15bands_48k[i].bin_end; j++) {
+                sum += fft_output[j];
+                count++;
             }
-            fft_result[i] = sum / group_size;  // 取平均值
-
-            if (!isfinite(fft_result[i])) {
-                fft_result[i] = 0.0f;  // 防止出现无穷大
-            }
-
-            // 可用于调试查看每个频段的幅值
-            // ESP_LOGI(TAG, "fft_result[%d] = %f", i, fft_result[i]);
+            fft_result[i] = (count > 0) ? (sum / count) : 0.0f;
         }
 
         // 将频谱结果发送到消息队列中（覆盖旧数据）
@@ -467,11 +492,11 @@ void app_main(void)
     assert(fft_output != NULL);
     assert(i2s_read_buff != NULL);
     lvgl_fft_canvas_init();
-    //mp3_player_init();
-
+    mp3_player_init();
+    bsp_codec_set_fs(48000, 16, CODEC_DEFAULT_CHANNEL);
     xTaskCreatePinnedToCore(lvgl_update_task, "lvgl_update_task", 4096 * 2, NULL, 1, NULL, 1);
-    //xTaskCreatePinnedToCore(fft_task, "fft_lvgl", 4096 * 2, NULL, 5, NULL,0);
-    xTaskCreatePinnedToCore(fft_task_pcm, "fft_lvgl_pcm", 4096 * 2, NULL, 5, NULL,0);
+    xTaskCreatePinnedToCore(fft_task, "fft_lvgl", 4096 * 2, NULL, 5, NULL,0);
+    //xTaskCreatePinnedToCore(fft_task_pcm, "fft_lvgl_pcm", 4096 * 2, NULL, 5, NULL,0);
     //xTaskCreatePinnedToCore(fft_task_mp3, "fft_task_mp3", 4096 * 2, NULL, 5, NULL,0);
     
 }
