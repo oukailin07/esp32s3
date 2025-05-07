@@ -1,4 +1,4 @@
-idf_component_register(SRCS "main.c" "../components/fft/fft.c"  "esp32_s3_szp.c"
+idf_component_register(SRCS "main.c" "../components/fft/fft.c"  "esp32_s3_szp.c" "app_ui.c"
                     INCLUDE_DIRS "."
                                  "../components/fft/include")
                                  

@@ -10,13 +10,15 @@
 #include "freertos/task.h"
 #include "driver/i2s_std.h"
 #include "esp_log.h"
-
+#include "audio_player.h"
+#include "app_ui.h"
 #include "esp32_s3_szp.h"
 #define TAG "FFT_VIS"
 float fft_table[CONFIG_DSP_MAX_FFT_SIZE];
 #define FFT_SIZE        1024
 QueueHandle_t fft_result_queue;
-
+QueueHandle_t fft_result_queue_mp3;
+int16_t *fft_pcm_buffer ;
 // 采样缓冲区
 int16_t *i2s_read_buff; // 16-bit stereo, 2倍空间
 __attribute__((aligned(16)))
@@ -280,9 +282,49 @@ void fft_task(void *arg)
         vTaskDelay(1);
     }
 }
+SemaphoreHandle_t fft_data_ready = NULL;
 
+void fft_task_mp3(void *arg)
+{
+    const int group_size = (FFT_SIZE / 2) / FFT_BAR_NUM;
+    float fft_result[FFT_BAR_NUM];
 
+    while (1) {
+        if (xSemaphoreTake(fft_data_ready, portMAX_DELAY) == pdTRUE) {
+            if (lvgl_port_lock(0)) {
+            for (int i = 0; i < FFT_SIZE; i++) {
+                float sample = (float)fft_pcm_buffer[i];
+                fft_input[2 * i] = sample;
+                fft_input[2 * i + 1] = 0.0f;
+                //ESP_LOGE(TAG, "sample = %f", sample);
+            }
+            lvgl_port_unlock();   // 解锁
+        }
+            bsp_codec_volume_set(1, NULL);
+            dsps_fft2r_fc32(fft_input, FFT_SIZE);
+            dsps_bit_rev_fc32(fft_input, FFT_SIZE);
 
+            for (int i = 0; i < FFT_SIZE / 2; i++) {
+                float real = fft_input[2 * i];
+                float imag = fft_input[2 * i + 1];
+                float mag = sqrtf(real * real + imag * imag);
+                float norm_mag = fminf(fmaxf(mag / MAX_FFT_INPUT_VALUE * 100.0f, 0.0f), 100.0f);
+                fft_output[i] = (1 - SMOOTHING_FACTOR) * fft_output[i] + SMOOTHING_FACTOR * norm_mag;
+                //ESP_LOGI(TAG, "fft_output[%d] = %f", i, fft_output[i]);
+            }
+
+            for (int i = 0; i < FFT_BAR_NUM; i++) {
+                float sum = 0;
+                for (int j = 0; j < group_size; j++) {
+                    sum += fft_output[i * group_size + j];
+                }
+                fft_result[i] = sum / group_size;
+            }
+
+            xQueueOverwrite(fft_result_queue, fft_result);
+        }
+    }
+}
 
 
 
@@ -300,11 +342,7 @@ void lvgl_update_task(void *arg)
         }
         vTaskDelay(1);  // 控制刷新速率
     }
-
-    
 }
-
-
 
 void app_main(void)
 {
@@ -314,16 +352,21 @@ void app_main(void)
     bsp_lvgl_start(); // 初始化液晶屏lvgl接口
     bsp_codec_init();
     dsps_fft2r_init_fc32(fft_table, CONFIG_DSP_MAX_FFT_SIZE);
+    fft_pcm_buffer = heap_caps_malloc(sizeof(int16_t) * FFT_SIZE, MALLOC_CAP_8BIT |MALLOC_CAP_INTERNAL);
 
+    fft_data_ready = xSemaphoreCreateBinary();
     i2s_read_buff = (int16_t *)heap_caps_malloc(sizeof(int16_t) * 4 * FFT_SIZE, MALLOC_CAP_8BIT | MALLOC_CAP_INTERNAL);
     fft_result_queue = xQueueCreate(1, sizeof(float) * FFT_SIZE / 2);
+    fft_result_queue_mp3 = xQueueCreate(1, sizeof(float) * FFT_SIZE);
     assert(fft_result_queue != NULL);
     assert(fft_input != NULL);
     assert(fft_output != NULL);
     assert(i2s_read_buff != NULL);
     lvgl_fft_canvas_init();
+    mp3_player_init();
+
     xTaskCreatePinnedToCore(lvgl_update_task, "lvgl_update_task", 4096 * 2, NULL, 1, NULL, 1);
     xTaskCreatePinnedToCore(fft_task, "fft_lvgl", 4096 * 2, NULL, 5, NULL,0);
+    //xTaskCreatePinnedToCore(fft_task_mp3, "fft_task_mp3", 4096 * 2, NULL, 5, NULL,0);
     
-
 }
