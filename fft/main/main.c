@@ -13,13 +13,16 @@
 
 #include "esp32_s3_szp.h"
 #define TAG "FFT_VIS"
-#define FFT_SIZE        128
+float fft_table[CONFIG_DSP_MAX_FFT_SIZE];
+#define FFT_SIZE        1024
 QueueHandle_t fft_result_queue;
 
 // 采样缓冲区
 int16_t *i2s_read_buff; // 16-bit stereo, 2倍空间
-float *fft_input;       // interleaved real/imag
-float *fft_output;          // magnitude
+__attribute__((aligned(16)))
+float fft_input[2 * FFT_SIZE];       // interleaved real/imag
+__attribute__((aligned(16)))
+float fft_output[FFT_SIZE/2];          // magnitude
 
 extern esp_codec_dev_handle_t record_dev_handle;
 extern i2s_chan_handle_t i2s_rx_chan;
@@ -43,27 +46,23 @@ const int peak_fall_speed = 8;        // 白块每帧下降速度（像素）
 #define BLOCK_SPACING 0        // 块之间的间距
 #define BLOCK_RADIUS 0         // 圆角半径
 static int peak_y[FFT_BAR_NUM] = {0};  // 存储每一列白色小块的位置
-lv_color_t hsv_to_rgb(uint16_t h, uint8_t s, uint8_t v)
+void hsv_to_rgb(float h, float s, float v, uint8_t *r, uint8_t *g, uint8_t *b)
 {
-    float r, g, b;
-    float hf = h / 60.0f; // 0-6
-    int i = (int)hf;
-    float f = hf - i;
-    float p = v * (1.0f - s / 255.0f);
-    float q = v * (1.0f - f * s / 255.0f);
-    float t = v * (1.0f - (1.0f - f) * s / 255.0f);
+    float c = v * s;
+    float x = c * (1 - fabsf(fmodf(h / 60.0f, 2) - 1));
+    float m = v - c;
+    float r_, g_, b_;
 
-    switch (i % 6) {
-        case 0: r = v; g = t; b = p; break;
-        case 1: r = q; g = v; b = p; break;
-        case 2: r = p; g = v; b = t; break;
-        case 3: r = p; g = q; b = v; break;
-        case 4: r = t; g = p; b = v; break;
-        case 5: r = v; g = p; b = q; break;
-        default: r = g = b = 0; break;
-    }
+    if (h < 60) { r_ = c; g_ = x; b_ = 0; }
+    else if (h < 120) { r_ = x; g_ = c; b_ = 0; }
+    else if (h < 180) { r_ = 0; g_ = c; b_ = x; }
+    else if (h < 240) { r_ = 0; g_ = x; b_ = c; }
+    else if (h < 300) { r_ = x; g_ = 0; b_ = c; }
+    else { r_ = c; g_ = 0; b_ = x; }
 
-    return lv_color_make((uint8_t)r, (uint8_t)g, (uint8_t)b);
+    *r = (r_ + m) * 255;
+    *g = (g_ + m) * 255;
+    *b = (b_ + m) * 255;
 }
 
 
@@ -93,64 +92,40 @@ void lvgl_fft_canvas_init()
 }
 
 
-void lvgl_fft_canvas_update(float *fft_data)
+void lvgl_fft_canvas_update(float *fft_avg)
 {
     lv_canvas_fill_bg(canvas, lv_color_black(), LV_OPA_COVER);  // 清屏
 
     int bar_width = FFT_BAR_WIDTH - 2;
     int block_h = FFT_CANVAS_HEIGHT / BLOCK_NUM;
-    int color_group_size = 8;  // 每种颜色基准的柱子数量
-
-    // 八种颜色基准，每组从浅到深
-    struct {
-        uint8_t r_start, g_start, b_start;  // 浅色（底部）
-        uint8_t r_end, g_end, b_end;        // 深色（顶部）
-    } color_gradients[8] = {
-        {255,150,150, 255,0,0},     // 红
-        {255,177,0, 255,240,200},   // 橙
-        {255,255,0, 255,255,200},   // 黄
-        {200,255,200, 0,255,0},     // 绿
-        {100,255,255, 0,255,255},   // 青
-        {96,145,255, 0,78,255},     // 蓝
-        {255,100,255, 255,0,255},   // 紫
-        {255,200,255, 255,105,180}  // 粉
-    };
 
     for (int i = 0; i < FFT_BAR_NUM; i++) {
-        int bin = i * (FFT_SIZE / 2) / FFT_BAR_NUM;
-        float value = fft_data[bin];
-
-        value = fminf(fmaxf(value, 0.0f), 100.0f);  // 限幅到 0~100
+        //float value = 100.0f;  // 模拟默认值
+        float value = fft_avg[i];
+        value = fminf(fmaxf(value, 0.0f), 100.0f);
 
         int bar_h = (int)(value * FFT_CANVAS_HEIGHT / 100.0f);
         int blocks_to_draw = bar_h / block_h;
         int bar_x = i * FFT_BAR_WIDTH;
 
-        int color_index = i / color_group_size;
-        if (color_index >= 8) color_index = 7;
+        // 从左到右的 hue 值（0~360）
+        float hue = ((float)i / FFT_BAR_NUM) * 360.0f;
 
-        uint8_t r_start = color_gradients[color_index].r_start;
-        uint8_t g_start = color_gradients[color_index].g_start;
-        uint8_t b_start = color_gradients[color_index].b_start;
-        uint8_t r_end = color_gradients[color_index].r_end;
-        uint8_t g_end = color_gradients[color_index].g_end;
-        uint8_t b_end = color_gradients[color_index].b_end;
+        int denom = blocks_to_draw > 0 ? blocks_to_draw : 1;
 
         for (int j = 0; j < blocks_to_draw; j++) {
             int block_y = FFT_CANVAS_HEIGHT - (j + 1) * block_h + BLOCK_SPACING / 2;
 
-            // 从底部（浅）到顶部（深）渐变
-            uint8_t r = r_end - (r_end - r_start) * j / blocks_to_draw;
-            uint8_t g = g_end - (g_end - g_start) * j / blocks_to_draw;
-            uint8_t b = b_end - (b_end - b_start) * j / blocks_to_draw;
-
+            float value_brightness = 1.0f - ((float)j / denom) * 0.6f;  // 从底部 1.0 到顶部 0.4
+            uint8_t r, g, b;
+            hsv_to_rgb(hue, 1.0f, value_brightness, &r, &g, &b);
             lv_color_t block_color = lv_color_make(r, g, b);
 
             lv_draw_rect_dsc_t block_dsc;
             lv_draw_rect_dsc_init(&block_dsc);
             block_dsc.bg_color = block_color;
             block_dsc.bg_opa = LV_OPA_COVER;
-            block_dsc.radius = BLOCK_RADIUS;
+            block_dsc.radius = (j < 2) ? 1 : BLOCK_RADIUS;
 
             lv_canvas_draw_rect(canvas,
                                 bar_x,
@@ -189,73 +164,93 @@ void lvgl_fft_canvas_update(float *fft_data)
 
 
 
+#define SMOOTHING_FACTOR 0.9f
+#define MAX_FFT_INPUT_VALUE 32767.0f
 
-
-#define SMOOTHING_FACTOR 0.02f
-#define MAX_FFT_INPUT_VALUE 10000.0f  // 根据需求调整最大输入值
-
-
+// 音频采集与 FFT 分析任务
 void fft_task(void *arg)
 {
-    if (!i2s_read_buff || !fft_input || !fft_output) {
+    // 检查 FFT 输入缓冲区是否初始化
+    if (!i2s_read_buff) {
         ESP_LOGE(TAG, "FFT buffers not initialized!");
-        vTaskDelete(NULL);
+        vTaskDelete(NULL);  // 删除当前任务
         return;
     }
 
+    // 每个频谱柱表示的频段宽度（FFT 输出中前半部分用于分析）
+    const int group_size = (FFT_SIZE / 2) / FFT_BAR_NUM;
+
+    // 用于存储最终每个频谱柱的平均幅值
+    float fft_result[FFT_BAR_NUM];
+
     while (1) {
-        // 每个样本包含 4 通道，每通道 16bit（int16_t）
+        // 计算读取缓冲区长度（4 通道，每个通道 16 位，FFT_SIZE 个采样点）
         int buffer_len = sizeof(int16_t) * 4 * FFT_SIZE;
+
+        // 从 I2S 接口读取音频数据
         esp_codec_dev_read(record_dev_handle, (void *)i2s_read_buff, buffer_len);
 
-        // 合并 4 个通道音频为一个通道进行 FFT
+        // 预处理采样数据，并准备 FFT 输入
         for (int i = 0; i < FFT_SIZE; i++) {
-            int16_t ch0 = i2s_read_buff[i * 4 + 0];
-            int16_t ch1 = i2s_read_buff[i * 4 + 1];
+            // 选择第4通道和第2通道的音频数据并混合（双声道平均）
+            int16_t ch4 = i2s_read_buff[i * 4 + 3];
+            int16_t ch2 = i2s_read_buff[i * 4 + 1];
+            int16_t mixed = (ch4 + ch2) / 2;
 
-            // 简单平均混音
-            int16_t mixed = (ch0 + ch1) / 2;
-
-            // 对 FFT 输入数据进行限制，防止异常值
-            fft_input[2 * i] = fmaxf(fminf((float)mixed, MAX_FFT_INPUT_VALUE), -MAX_FFT_INPUT_VALUE);  // 实部
-            fft_input[2 * i + 1] = 0.0f; // 虚部初始化为 0
+            // 转换为 float 类型，并限制值范围
+            float sample = (float)mixed;
+            fft_input[2 * i] = fmaxf(fminf(sample, MAX_FFT_INPUT_VALUE), -MAX_FFT_INPUT_VALUE);  // 实部
+            fft_input[2 * i + 1] = 0.0f;  // 虚部设为 0
         }
 
-        // 执行 FFT
+        // 进行 FFT 计算（实数输入，复数输出）
         dsps_fft2r_fc32(fft_input, FFT_SIZE);
+
+        // 位反转（必要的 FFT 后处理步骤）
         dsps_bit_rev_fc32(fft_input, FFT_SIZE);
 
-        // 计算幅值并进行平滑处理
+        // 计算频谱幅值并进行归一化和平滑处理
         for (int i = 0; i < FFT_SIZE / 2; i++) {
-            float real = fft_input[2 * i];
-            float imag = fft_input[2 * i + 1];
-            float magnitude = sqrtf(real * real + imag * imag);
+            float real = fft_input[2 * i];     // 实部
+            float imag = fft_input[2 * i + 1]; // 虚部
+            float mag = sqrtf(real * real + imag * imag);  // 幅值计算
+            mag = isnan(mag) || mag < 0.0f ? 0.0f : mag;    // 处理异常值
 
-            // 如果幅值为 NaN 或负数，跳过这个值
-            if (isnan(magnitude) || magnitude < 0.0f) {
-                magnitude = 0.0f;
-            }
+            // 归一化到 0~100 范围
+            float norm_mag = fminf(fmaxf(mag / MAX_FFT_INPUT_VALUE * 100.0f, 0.0f), 100.0f);
 
-            // 平滑处理
-            fft_output[i] = (1 - SMOOTHING_FACTOR) * fft_output[i] + SMOOTHING_FACTOR * magnitude - 5.0f;
+            // 使用滑动平均滤波实现频谱平滑效果
+            fft_output[i] = (1 - SMOOTHING_FACTOR) * fft_output[i] + SMOOTHING_FACTOR * norm_mag;
 
-            // 检查输出是否有效，如果是 NaN 则设为默认值 0
             if (isnan(fft_output[i])) {
-                ESP_LOGW(TAG, "Warning: FFT output[%d] is NaN", i);
-                fft_output[i] = 0.0f; // 将 NaN 设置为 0 或其他默认值
+                fft_output[i] = 0.0f;  // 处理 NaN
             }
-
-            //ESP_LOGI(TAG, "FFT output[%d]: %f", i, fft_output[i]);
         }
 
-        // 拷贝结果并通过队列传递
-        float fft_result[FFT_SIZE / 2];
-        memcpy(fft_result, fft_output, sizeof(fft_result));
+        // 对每个频谱柱求平均幅值（频段分组）
+        for (int i = 0; i < FFT_BAR_NUM; i++) {
+            float sum = 0;
+            for (int j = 0; j < group_size; j++) {
+                sum += fft_output[i * group_size + j];  // 同一频段内累加
+            }
+            fft_result[i] = sum / group_size;  // 取平均值
+
+            if (!isfinite(fft_result[i])) {
+                fft_result[i] = 0.0f;  // 防止出现无穷大
+            }
+
+            // 可用于调试查看每个频段的幅值
+            // ESP_LOGI(TAG, "fft_result[%d] = %f", i, fft_result[i]);
+        }
+
+        // 将频谱结果发送到消息队列中（覆盖旧数据）
         xQueueOverwrite(fft_result_queue, fft_result);
 
-        vTaskDelay(1); // 可调节刷新频率
+        // 小延时，释放 CPU 给其他任务使用
+        vTaskDelay(1);
     }
 }
+
 
 
 
@@ -288,15 +283,9 @@ void app_main(void)
     pca9557_init();  // IO扩展芯片初始化
     bsp_lvgl_start(); // 初始化液晶屏lvgl接口
     bsp_codec_init();
-    dsps_fft2r_init_fc32(NULL, CONFIG_DSP_MAX_FFT_SIZE);
-    //lvgl_fft_ui_init();
-    // fft_input = (float *)heap_caps_malloc(sizeof(float) * 2 * FFT_SIZE, MALLOC_CAP_32BIT | MALLOC_CAP_INTERNAL);
-    // fft_output = (float *)heap_caps_malloc(sizeof(float) * FFT_SIZE / 2, MALLOC_CAP_32BIT | MALLOC_CAP_INTERNAL);  // 如果用来放幅度
-    fft_input = (float *)heap_caps_aligned_alloc(16, sizeof(float) * 2 * FFT_SIZE, MALLOC_CAP_32BIT | MALLOC_CAP_INTERNAL);
-    fft_output = (float *)heap_caps_aligned_alloc(16, sizeof(float) * FFT_SIZE / 2, MALLOC_CAP_32BIT | MALLOC_CAP_INTERNAL);
-    ESP_LOGE(TAG, "fft_input addr = %p", fft_input);
-    ESP_LOGE(TAG, "fft_output addr = %p", fft_output);
-    i2s_read_buff = (int16_t *)heap_caps_malloc(sizeof(int16_t) * 4 * FFT_SIZE, MALLOC_CAP_32BIT | MALLOC_CAP_INTERNAL);
+    dsps_fft2r_init_fc32(fft_table, CONFIG_DSP_MAX_FFT_SIZE);
+
+    i2s_read_buff = (int16_t *)heap_caps_malloc(sizeof(int16_t) * 4 * FFT_SIZE, MALLOC_CAP_8BIT | MALLOC_CAP_INTERNAL);
     fft_result_queue = xQueueCreate(1, sizeof(float) * FFT_SIZE / 2);
     assert(fft_result_queue != NULL);
     assert(fft_input != NULL);
