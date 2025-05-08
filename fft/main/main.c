@@ -20,9 +20,8 @@
 #define SAMPLE_RATE 16000
 #define NUM_BARS 15
 #define MAX_FFT_INPUT_VALUE 32767.0f
-#define SMOOTHING_FACTOR 1.0f
+#define SMOOTHING_FACTOR 0.3f
 
-extern int16_t *i2s_read_buff;
 extern esp_codec_dev_handle_t record_dev_handle;
 extern void hsv_to_rgb(float h, float s, float v, uint8_t *r, uint8_t *g, uint8_t *b);
 
@@ -86,9 +85,9 @@ static lv_color_t *canvas_buf;
 #define FFT_CANVAS_HEIGHT   FFT_BAR_HEIGHT
 
 int peak_heights[FFT_BAR_NUM] = {0};  // 每个柱子的顶部白块高度
-const int peak_fall_speed = 4;        // 白块每帧下降速度（像素）
+const int peak_fall_speed = 2;        // 白块每帧下降速度（像素）
 
-#define BLOCK_NUM 25           // 每列分为多少小块
+#define BLOCK_NUM 50           // 每列分为多少小块
 #define BLOCK_SPACING 0        // 块之间的间距
 #define BLOCK_RADIUS 0         // 圆角半径
 void hsv_to_rgb(float h, float s, float v, uint8_t *r, uint8_t *g, uint8_t *b)
@@ -237,8 +236,6 @@ void lvgl_fft_canvas_update(float *fft_avg) {
     }
 }
 
-#define SMOOTHING_FACTOR 1.0f
-#define MAX_FFT_INPUT_VALUE 32767.0f
 
 // 音频采集与 FFT 分析任务
 void fft_task(void *arg)
@@ -315,20 +312,27 @@ SemaphoreHandle_t fft_data_ready = NULL;
 
 void fft_task_mp3(void *arg)
 {
-    const int group_size = (FFT_SIZE / 2) / FFT_BAR_NUM;
     float fft_result[FFT_BAR_NUM];
-
+    
+    int16_t *fft_pcm_buffer_tem = heap_caps_malloc(sizeof(int16_t) * FFT_SIZE*2, MALLOC_CAP_8BIT |MALLOC_CAP_INTERNAL);
     while (1) {
         if (xSemaphoreTake(fft_data_ready, portMAX_DELAY) == pdTRUE) {
-            if (lvgl_port_lock(0)) {
+            memcpy(fft_pcm_buffer_tem, fft_pcm_buffer, sizeof(int16_t) * FFT_SIZE*2);
+
             for (int i = 0; i < FFT_SIZE; i++) {
-                float sample = (float)fft_pcm_buffer[i];
+                int16_t ch1 = fft_pcm_buffer_tem[i * 2];
+                int16_t ch2 = fft_pcm_buffer_tem[i * 2 + 1];
+                int16_t mixed = (ch1 + ch2) / 2;
+
+                float sample = (float)mixed;
                 fft_input[2 * i] = sample;
                 fft_input[2 * i + 1] = 0.0f;
-                //ESP_LOGE(TAG, "sample = %f", sample);
             }
-            lvgl_port_unlock();   // 解锁
-        }
+
+            // for(int i = 0; i < 8; i++) {
+            //     ESP_LOGE(TAG, "fft_input[i*2] = %f fft_pcm_buffer_tem[%d]:%d", fft_input[i*2], i, fft_pcm_buffer_tem[i * 2]);
+            // }
+        
             bsp_codec_volume_set(1, NULL);
             dsps_fft2r_fc32(fft_input, FFT_SIZE);
             dsps_bit_rev_fc32(fft_input, FFT_SIZE);
@@ -353,6 +357,7 @@ void fft_task_mp3(void *arg)
             }
 
             xQueueOverwrite(fft_result_queue, fft_result);
+            vTaskDelay(10);
         }
     }
 }
@@ -377,7 +382,6 @@ void fft_task_pcm(void *arg)
         }
     }
 
-    const int group_size = (FFT_SIZE / 2) / FFT_BAR_NUM;
     float fft_result[FFT_BAR_NUM];
 
     while (1) {
@@ -481,18 +485,17 @@ void app_main(void)
     bsp_lvgl_start(); // 初始化液晶屏lvgl接口
     bsp_codec_init();
     dsps_fft2r_init_fc32(fft_table, CONFIG_DSP_MAX_FFT_SIZE);
-    fft_pcm_buffer = heap_caps_malloc(sizeof(int16_t) * FFT_SIZE, MALLOC_CAP_8BIT |MALLOC_CAP_INTERNAL);
-
+    fft_pcm_buffer = heap_caps_malloc(sizeof(int16_t) * FFT_SIZE*2, MALLOC_CAP_8BIT |MALLOC_CAP_INTERNAL);
     fft_data_ready = xSemaphoreCreateBinary();
     i2s_read_buff = (int16_t *)heap_caps_malloc(sizeof(int16_t) * 4 * FFT_SIZE, MALLOC_CAP_8BIT | MALLOC_CAP_INTERNAL);
     fft_result_queue = xQueueCreate(1, sizeof(float) * FFT_BAR_NUM);
-    fft_result_queue_mp3 = xQueueCreate(1, sizeof(float) * FFT_SIZE);
+    //fft_result_queue_mp3 = xQueueCreate(1, sizeof(float) * FFT_SIZE);
     assert(fft_result_queue != NULL);
     assert(fft_input != NULL);
     assert(fft_output != NULL);
     assert(i2s_read_buff != NULL);
     lvgl_fft_canvas_init();
-    mp3_player_init();
+    //mp3_player_init();
     bsp_codec_set_fs(48000, 16, CODEC_DEFAULT_CHANNEL);
     xTaskCreatePinnedToCore(lvgl_update_task, "lvgl_update_task", 4096 * 2, NULL, 1, NULL, 1);
     xTaskCreatePinnedToCore(fft_task, "fft_lvgl", 4096 * 2, NULL, 5, NULL,0);

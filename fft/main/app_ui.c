@@ -65,10 +65,11 @@ static esp_err_t _audio_player_write_fn(void *audio_buffer, size_t len, size_t *
 {
     esp_err_t ret = ESP_OK;
 
-    //ESP_LOGE(TAG, "audio_buffer[0] = %d", ((int16_t *)audio_buffer)[0]);
-    // 简化处理，仅拷贝前 FFT_SIZE 个样本用于 FFT
+    // //ESP_LOGE(TAG, "audio_buffer[0] = %d", ((int16_t *)audio_buffer)[0]);
+    // // 简化处理，仅拷贝前 FFT_SIZE 个样本用于 FFT
     // if (len >= sizeof(int16_t) * FFT_SIZE) { //每个样本16位
-    //     memcpy(fft_pcm_buffer, audio_buffer, sizeof(int16_t) * FFT_SIZE);
+    //     memcpy(fft_pcm_buffer, audio_buffer, sizeof(int16_t) * FFT_SIZE *2);
+    //     //ESP_LOGE(TAG, "fft_pcm_buffer[0] = %d", ((int16_t *)fft_pcm_buffer)[0]);
     //     //ESP_LOGE(TAG, "audio_buffer size is too large, len = %d", len);
     //     xSemaphoreGive(fft_data_ready);
     // }
