@@ -157,6 +157,70 @@ static void build_hello_packet(uint8_t *packet, size_t *packet_len)
     ESP_LOG_BUFFER_HEX(TAG, packet, *packet_len);
 }
 
+static void build_sn_packet(uint8_t *packet, size_t *packet_len)
+{
+    uint8_t plain[64] = {0};
+    uint8_t aes_data[64] = {0};
+    size_t len;
+
+    // 1. 时间戳（4 字节）
+    uint32_t timestamp = (uint32_t)(esp_timer_get_time() / 1000000ULL);
+    plain[0] = (timestamp >> 24) & 0xFF;
+    plain[1] = (timestamp >> 16) & 0xFF;
+    plain[2] = (timestamp >> 8) & 0xFF;
+    plain[3] = (timestamp) & 0xFF;
+
+    // 2. 添加 "AT+SN=PF00A02505290001\r"
+    const char *sn_cmd = "AT+SN=PF00A02505290001\r";
+    size_t sn_len = strlen(sn_cmd);
+    memcpy(plain + 4, sn_cmd, sn_len);
+
+    size_t total_len = 4 + sn_len; // 总长度：时间戳 + 指令
+
+    // 👇 打印明文
+    ESP_LOG_BUFFER_HEX(TAG, plain, total_len);
+
+    // 3. PKCS7 填充
+    pad_pkcs7(plain, total_len, 16, &len);
+
+    // 4. 构造 AES-128 ECB 密钥（基于 remote_device_mac）
+    uint8_t aes_key[16] = {
+        0x32, 0x31, 0x36, 0x43, 0x41, 0x41, 0x30, 0x41, 0x46, 0x35,
+        remote_device_mac[0], remote_device_mac[1], remote_device_mac[2],
+        remote_device_mac[3], remote_device_mac[4], remote_device_mac[5]
+    };
+
+    // 5. 加密
+    aes_encrypt_ecb(aes_key, plain, len, aes_data);
+
+    // 👇 打印加密后的数据
+    ESP_LOG_BUFFER_HEX(TAG, aes_data, len);
+
+    // 6. 封包
+    size_t offset = 0;
+    packet[offset++] = 0x09;  // 帧头
+    packet[offset++] = 0x5F;  // 地址
+    packet[offset++] = 0x00;
+    packet[offset++] = 0x00;
+    packet[offset++] = (len >> 8) & 0xFF;
+    packet[offset++] = len & 0xFF;
+    memcpy(&packet[offset], aes_data, len);
+    offset += len;
+
+    // 7. XOR 校验
+    uint8_t xor = 0;
+    for (int i = 0; i < offset; i++) xor ^= packet[i];
+    packet[offset++] = xor;
+
+    // 8. 包尾
+    packet[offset++] = 0x0D;
+
+    *packet_len = offset;
+
+    // 👇 打印最终数据包
+    ESP_LOG_BUFFER_HEX(TAG, packet, *packet_len);
+}
+
 // static void build_hello_packet(uint8_t *packet, size_t *packet_len)
 // {
 //     uint8_t plain[64] = {0};
@@ -600,6 +664,27 @@ case ESP_GATTC_NOTIFY_EVT:
         text = 1;  
     }
     
+    if(text == 1)
+    {
+        
+        uint8_t packet[128] = {0};
+        size_t packet_len = 0;
+        build_sn_packet(packet, &packet_len);
+
+        esp_err_t write_ret = esp_ble_gattc_write_char(
+            gattc_if,
+            p_data->notify.conn_id,  // ← 注意这里应该用 notify.conn_id 而不是 search_cmpl.conn_id
+            write_char_handle,
+            packet_len,
+            packet,
+            ESP_GATT_WRITE_TYPE_RSP,
+            ESP_GATT_AUTH_REQ_NONE);
+
+        if (write_ret != ESP_OK) {
+            ESP_LOGE(GATTC_TAG, "Failed to write characteristic: %s", esp_err_to_name(write_ret));
+        }  
+        text = 2;  
+    }
     
     // if (p_data->notify.value_len >= 3 &&
     //     strncmp((char *)p_data->notify.value, "+OK", 3) == 0) {
